@@ -2,87 +2,188 @@
 
 **Repl** is an in-game command bar for Roblox: press the activation key, a single
 bar slides in, you type a command, and it runs — server-authoritative, typed,
-themed. It looks like [Cmdr](https://eryn.io/Cmdr/) on the surface, but behind
-the bar is a **real shell** (a read-eval-print loop, hence the name): a proper
-lexer → parser → AST → evaluator that understands chains, pipes, a return pool,
-and variables.
+themed. On the surface it's [Cmdr](https://eryn.io/Cmdr/). Behind the bar is a
+**real shell** — a read-eval-print loop (hence the name): lexer → parser → AST →
+evaluator, with chains, a return pool, and variables.
 
-The name is literal: a **REPL**. Read a line, evaluate it through the shell,
-print the result, loop.
+It is a **standalone module**, like Karet: one `require(ReplicatedStorage.Repl)`
+returns the whole API; there's nothing to wire together.
 
-## What it is (decided)
+## Structure
 
-- **Surface: a command bar only.** No windowed terminal. The bar slides in on an
-  activation key, autocomplete hangs above it, output prints inline. (Karet v1's
-  windowed Terminal is retired.)
-- **Grammar: the full shell.** One-command-with-typed-args is the common case,
-  but the whole grammar works in the bar — chains (`&&`, `||`, `&`), the return
-  pool (`//`, `/Player`, `/target#2`), variables (`@x`), expressions, guards.
-  Ported and evolved from Karet v1's `Shell`.
-- **Identity: fresh.** New name, new repo (`mkl48/Repl`). Karet v1 stays as-is;
-  Repl carries over v1's proven backend but is its own project.
-
-## Better than Cmdr (the priorities)
-
-1. **Autocomplete UX** — fuzzy matching, inline **ghost-text** completion (the
-   grey suggestion you accept with Tab/→), argument previews, not just a list.
-2. **Typed-arg ergonomics** — argument types inferred from real **Luau type
-   annotations** on the handler where possible, plus a terse arg syntax; far less
-   boilerplate than Cmdr's verbose type definitions.
-3. **Theming** — semantic themes (Tokyonight / Gruvbox / Catppuccin / Nord) with
-   live recolor, carried from Karet. Cmdr's UI is rigid; Repl's is a colorscheme.
-4. **Mobile + console** — first-class touch and gamepad entry (via Switch), which
-   Cmdr handles poorly.
-5. **Proper CS architecture & terms** — the pipeline is named for what it is:
-   `Lexer` (tokens), `Parser` (AST), `Evaluator`, `ReturnPool`, `Registry`,
-   `Completer`. No dumbed-down names.
-6. **Terminal behaviours** — even as a bar: command **history** (up/down), tab
-   completion, full cursor editing, a REPL prompt, structured output.
-
-## Architecture (pipeline)
+A game-framework layout. `_`-prefixed folders are internal; user content lives
+under `_Commands/`.
 
 ```
-keypress ─▶ Bar (input, cursor, history) ─▶ Lexer ─▶ Parser ─▶ AST
-                    │                                              │
-              Completer ◀── Registry (typed commands) ────────────┤
-                    │                                              ▼
-              ghost text / hints                              Evaluator
-                                                                   │
-                                            Context + Networking (Substance, authoritative)
-                                                                   ▼
-                                                           Output (printed inline)
+Repl                       -- the umbrella ModuleScript (returns the API)
+  _Classes/                -- OOP pieces you .new()
+    Command · Argument · Context · Type · Session
+  _Main/                   -- the entry points
+    Server                 -- Registry + Dispatcher, hooks, auth, authoritative run
+    Client                 -- the bar UI (Fusion), activation, history, rendering
+    Types                  -- the type engine: built-ins + the type-expression compiler
+    Network                -- Substance transport (server-authoritative)
+  _Patterns/               -- domain-agnostic CS primitives
+    Result · Option · Stream
+  _Utility/                -- helpers
+    Shell/ (Lexer, Token, Parser, Ast, Evaluator, ReturnPool) · Fuzzy · Render
+  _Commands/               -- everything a game author writes
+    _Client/ · _Server/ · _Shared/   -- command defs, by realm
+    _Types/                          -- custom argument types, by name
+  _Packages/               -- vendored deps
+    Promise · GoodSignal · Janitor · Substance · Switch · Fusion · t
 ```
 
-- **Bar** — the on-screen surface: one input line, cursor, history, ghost text,
-  the autocomplete popover, inline output. Themed.
-- **Lexer / Parser / AST** — the shell front end (ported from Karet v1's `Shell`).
-- **Registry** — typed command definitions; arg types inferred from Luau where
-  possible.
-- **Completer** — fuzzy + ghost-text suggestions from the registry and the
-  current AST/cursor position.
-- **Evaluator** — walks the AST, resolves args, runs handlers, manages the
-  return pool and variables.
-- **Context / Networking** — server-authoritative execution over Substance
-  (Karet v1's model); the client never runs privileged commands.
-- **Theme** — semantic colorscheme piped through the whole bar.
+## The command bar (client) API
 
-## Carried over from Karet v1
+```lua
+local Repl = require(game.ReplicatedStorage.Repl)
 
-Port and evolve (don't rewrite): `Shell` (Lexer/Parser/Evaluator/Ast/ReturnPool),
-`Registry`/`Commands`, `Types`, `Context` + `Networking`, `Theme`, and the
-headless test approach (v1 had 90 specs). Retire: the windowed `Terminal`, Iris,
-Kaveat (the Luau editor), the WindowManager.
+Repl:SetActivationKeys({ Enum.KeyCode.Semicolon })   -- Switch-backed, cross-platform
+Repl:Show() / :Hide() / :Toggle()
+Repl:Execute("kill /Player && announce done")        -- run a line programmatically
+Repl.Theme:Set("tokyonight")                         -- semantic colorscheme, live recolor
+```
 
-Dependencies: **Switch** (input), **Substance** (networking). Docs: **Docket**
-from day one.
+## The registry (server) API
 
-## Build order (proposed)
+```lua
+Repl.Registry:RegisterCommandsIn(ServerStorage.Commands)   -- folders of defs
+Repl.Registry:RegisterTypesIn(ServerStorage.Types)
+Repl.Registry:RegisterCommand(def)                          -- one at a time
+Repl.Registry:RegisterType(name, typeDef)
+Repl.Registry:RegisterHook("BeforeRun" | "AfterRun", fn)
+Repl.Registry:GetStore(name)                                -- shared cross-command state
+```
 
-1. Scaffold: repo, rokit/wally, project json, deps, Docket config.
-2. Shell core: port Lexer → Parser → AST → Evaluator + ReturnPool, with headless
-   specs. (Pure Luau, testable without Roblox.)
-3. Registry + typed args (Luau-inferred), with specs.
-4. Completer (fuzzy + ghost text), with specs.
-5. The Bar UI (Switch input, cursor/history/output, theme) — Studio-verified.
-6. Context + Networking (Substance, authoritative).
-7. Docs (Docket), installer, release.
+## Commands — the schema
+
+A command is a ModuleScript under `_Commands/_Shared` (or `_Client`/`_Server`).
+Its arguments are declared with a terse **string DSL** — `name: TypeExpr [= default]`
+— far less boilerplate than Cmdr's arg tables. Args arrive already typed and
+validated in the handler.
+
+```lua
+return {
+    Name = "kill",
+    Aliases = { "slay" },
+    Description = "Kill a player.",
+    Capabilities = { "players.kill" },    -- auth (see below)
+    Args = {
+        "victim: Players",
+        "amount: Integer? = 1",
+    },
+    Run = function(ctx, victim, amount)
+        for _, p in victim do p.Character:BreakJoints() end
+        return ctx:ok(`killed {#victim}`)
+    end,
+}
+```
+
+### The type-expression language (the "better than Cmdr")
+
+The text after the colon is a real **type expression**, compiled by `_Main/Types`
+into a resolved [[Type]] with merged validation + autocomplete. It is a *compiler*,
+not a lookup:
+
+| Form | Meaning | Autocomplete |
+| --- | --- | --- |
+| `Player` | a single type | that type's suggestions |
+| `Player \| Character` | **union** (either) | both sets merged |
+| `Number & Int32` | **intersection** (both) | A's suggestions filtered by B |
+| `2 < Number < 30` | **range / conditional** | **enumerates the valid values** (3…29) |
+| `Number >= 0` | open-ended bound | — |
+| `(A \| B) & C` | grouping | composed |
+
+Grammar (low→high precedence): `Union(|) → Intersection(&) → Range(bounded atom) → Atom(TypeName | "(" expr ")")`.
+
+## Argument types — the schema
+
+Under `_Commands/_Types`. A type transforms raw text → an intermediate, validates
+it, and offers autocomplete + optional **expansions** (sigil shortcuts):
+
+```lua
+return {
+    Name = "Players",
+    Transform = function(raw) return ... end,      -- text -> intermediate
+    Validate  = function(value) return ok, why end,
+    Autocomplete = function(value) return { ... } end,
+    Parse = function(value) return value end,        -- intermediate -> final
+    Expansions = {                                   -- typed shortcuts
+        ["*"] = function() return Players:GetPlayers() end,   -- everyone
+        ["%"] = function(team) return teamOf(team) end,       -- %Raiders
+    },
+}
+```
+
+## The Context — terminal semantics
+
+Passed to every handler (`_Classes/Context`). This is where the terminal lives:
+structured output, exit codes, streams, and running other commands.
+
+```lua
+-- output (all build the structured Output tree, drawn by the renderer)
+ctx:reply(t) · :success(t) · :error(t) · :warn(t) · :info(t) · :message(t)
+ctx:custom(color, t) · :ascii(art) · :table(rows) · :status(kind, t) · :icon(id, t)
+-- interaction
+ctx:suggest(list)                 -- push autocomplete suggestions
+ctx:exec(name, ...)               -- run another command, returns its Result
+ctx:prompt(q) / :confirm(q)       -- ask the executor (async -> Reaction)
+-- flow / result
+ctx:ok(...) · :err(code, msg) · :abort(msg)   -- exit with a Result
+ctx:return(...)                   -- push to the shell return pool (//)
+-- identity / state
+ctx.executor · ctx.rawText · ctx.args · ctx.realm · ctx:store(name)
+```
+
+## Terminal rendering
+
+**Output is structured, not strings.** A command builds an Output tree; a reusable
+renderer draws it. That is what makes ascii/icons/status/multiline all one system.
+
+- **`Segment`** = `{ text, color, bold?, italic?, icon?, link? }` (the atom).
+- **`Line`** = list of segments. **`Block`** = list of lines (multiline, ascii, tables, panels).
+- A builder/markup API composes them (`ctx:reply()` returns a builder).
+- The **renderer** (`_Utility/Render`, in **Fusion**) maps the Output tree to
+  instances: RichText labels, inline icons (Lucide), status spinners/glyphs. Colors
+  are `Computed` off the theme `Value`, so recolor is live; `Spring` drives the
+  slide-in, ghost-text fade, and status animation.
+
+## Authentication — capability-based
+
+Not role tiers (User < Admin < Owner). **Capabilities**, composed:
+
+- Commands declare **`Capabilities`** (e.g. `{ "players.kill" }`), not a level.
+- **Roles are bundles of capabilities**, with wildcards:
+  `Admin = { "players.*", "server.announce" }`, `Owner = { "*" }`.
+- A **resolver hook** maps player → roles (group rank, gamepass, attribute, DataStore);
+  it may be **async** (returns a Reaction/Promise).
+- **Policies** are predicates that inspect the *args*, not just the command — e.g.
+  "targeting others needs `players.kill.others`; targeting self needs only
+  `players.kill`". Context-aware, per-argument.
+- All checks run **server-side** in `_Main/Server` before the handler; the client
+  never decides.
+
+## Classes & Patterns
+
+- **Classes** (`.new()`): `Command`, `Argument`, `Context`, `Type`, `Session`.
+- **Patterns** (CS primitives the packages don't give us): `Result` (Ok/Err — the
+  terminal-correct return), `Option` (Some/None), `Stream` (structured output sink).
+- Everything else comes from **Packages**: GoodSignal (events), Janitor (cleanup),
+  Promise + Substance Reaction (async), Substance (networking), Switch (input),
+  Fusion (UI), t (runtime type checks). Fuzzy matching is `_Utility/Fuzzy`.
+
+## Build order
+
+Front-to-back, each headless-testable until the UI:
+
+1. **Shell** — Lexer (done) → Parser → AST → Evaluator + ReturnPool. Specs.
+2. **Type engine** — the type-expression compiler (union/intersection/range),
+   built-in types, autocomplete composition. Specs.
+3. **Registry** — command + type registration, the `Args` string-DSL parser,
+   hooks. Specs.
+4. **Auth** — capabilities, roles, policies, resolver. Specs.
+5. **Context + Result/Option/Stream + Output model.** Specs.
+6. **Network** — Substance transport, server-authoritative dispatch.
+7. **Client / Bar** — Fusion UI, Switch input, the renderer, history, ghost text.
+8. Docs (Docket), installer, release.
