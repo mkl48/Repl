@@ -1,0 +1,4 @@
+# generated docs live on the gh-pages branch
+/docs/
+# spec scratch dirs
+tests/.tmp-*/

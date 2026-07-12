@@ -1,0 +1,14 @@
+[package]
+name = "kr3ative/repl"
+version = "0.1.0"
+description = "An in-game command bar for Roblox, backed by a real shell."
+license = "MIT"
+authors = ["kr3ative"]
+registry = "https://github.com/UpliftGames/wally-index"
+realm = "shared"
+
+[dependencies]
+# Switch (input) and Substance (networking) are vendored under src/ so Repl ships
+# with everything it needs. Uncomment for Wally-managed copies instead.
+# Switch = "ker/switch@0.1.0"
+# Substance = "ker/substance@0.1.0"
