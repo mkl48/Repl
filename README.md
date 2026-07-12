@@ -37,6 +37,23 @@ Cmdr-style surface instead of a windowed terminal. See [DESIGN.md](DESIGN.md).
 - **Mobile + console** — first-class touch and gamepad entry.
 - **A real shell** — chains, a return pool, variables, and proper CS internals.
 
+## Installation
+
+### Command bar (no toolchain)
+
+Paste this one snippet into the Studio command bar; it fetches and runs the full
+installer over HTTP (enable *Game Settings → Security → Allow HTTP Requests*),
+recreating the whole tree under `ReplicatedStorage.Repl`:
+
+```lua
+local h = game:GetService("HttpService")
+loadstring(h:GetAsync("https://raw.githubusercontent.com/mkl48/Repl/master/dist/install.luau"))()
+```
+
+([`dist/bootstrap.luau`](dist/bootstrap.luau) is the same with error handling.)
+Or, offline, paste the whole [`dist/install.luau`](dist/install.luau) directly.
+Regenerate it from source any time with `lune run scripts/build-installer`.
+
 ## Development
 
 ```sh
