@@ -425,12 +425,7 @@ function Bar.new(config: Config)
 	end)
 
 	-- ── activation key (sunk via CAS so ` doesn't also open the backpack) ─────
-	ContextActionService:BindAction("ReplToggle", function(_, state)
-		if state == Enum.UserInputState.Begin then
-			self:toggle()
-		end
-		return Enum.ContextActionResult.Sink
-	end, false, table.unpack(self._activationKeys))
+	self:setActivationKeys(self._activationKeys)
 
 	-- ── in-terminal keys (only act while open + focused) ─────────────────────
 	table.insert(
@@ -512,6 +507,20 @@ function Bar:_suppressGameInput(on: boolean)
 			StarterGui:SetCoreGuiEnabled(Enum.CoreGuiType.Backpack, true)
 		end)
 	end
+end
+
+--- (Re)binds the activation key(s), sinking them so they don't leak to core UI.
+function Bar:setActivationKeys(keys: { Enum.KeyCode })
+	self._activationKeys = keys
+	pcall(function()
+		ContextActionService:UnbindAction("ReplToggle")
+	end)
+	ContextActionService:BindAction("ReplToggle", function(_, state)
+		if state == Enum.UserInputState.Begin then
+			self:toggle()
+		end
+		return Enum.ContextActionResult.Sink
+	end, false, table.unpack(keys))
 end
 
 --- Appends a rendered [[Output]] node to the terminal.

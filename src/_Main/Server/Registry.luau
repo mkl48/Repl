@@ -99,4 +99,30 @@ function Registry:fire(phase: "before" | "after", ...: any)
 	end
 end
 
+-- ── friendly public names (the DESIGN.md surface) ─────────────────────────────
+
+--- Registers one command definition. Alias of `register`.
+Registry.RegisterCommand = Registry.register
+
+--- Registers a custom argument type under `name`.
+function Registry:RegisterType(name: string, typeDef: any)
+	typeDef = typeDef or {}
+	typeDef.name = name
+	self:registerType(typeDef)
+end
+
+local HOOK_PHASE: { [string]: string } = { BeforeRun = "before", AfterRun = "after" }
+
+--- Adds a `"BeforeRun"` / `"AfterRun"` hook.
+function Registry:RegisterHook(phase: string, fn: Hook)
+	self:on(HOOK_PHASE[phase] or phase, fn)
+end
+
+--- A named, shared table for cross-command state (created on first use).
+function Registry:GetStore(name: string): { [any]: any }
+	self._stores = self._stores or {}
+	self._stores[name] = self._stores[name] or {}
+	return self._stores[name]
+end
+
 return Registry
