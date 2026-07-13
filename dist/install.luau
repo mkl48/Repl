@@ -8131,6 +8131,4065 @@ local function xtypeof(\
 end\
 \
 return xtypeof"},
+{"Repl/_Packages/Substance","ModuleScript","-- Substance\
+-- init.lua\
+-- Plinko Labs\
+\
+local Particle = require(script.Particle)\
+local React = require(script.React)\
+local Tools = require(script.Tools)\
+\
+local Substance = {}\
+\
+function Substance.Quark(name: string, definition: any)\
+	Particle.Quark(name, definition)\
+end\
+\
+function Substance.Gluon(name: string, schema: {[string]: any})\
+	Particle.Gluon(name, schema)\
+end\
+\
+function Substance.Define(name: string, schema: {[string]: any}): any\
+	return Particle.Define(name, schema)\
+end\
+\
+function Substance.Compose(name: string, atoms: {any}, eventType: string): any\
+	return Particle.Compose(name, atoms, eventType)\
+end\
+\
+function Substance.Post(name: string, payload: any, target: Player?): any\
+	return Particle.Dispatch.Post(name, payload, target)\
+end\
+\
+function Substance.Subscribe(name: string, handler: (any, Player?) -> any): any\
+	return Particle.Dispatch.Subscribe(name, handler)\
+end\
+\
+function Substance.Broadcast(name: string, payload: any, filter: ((Player) -> boolean)?)\
+	Particle.Dispatch.Broadcast(name, payload, filter)\
+end\
+\
+function Substance.Pre(name: string, hook: (any) -> any)\
+	Tools.Hooks.Pre(name, hook)\
+end\
+\
+function Substance.Hook(name: string, hook: (any) -> any)\
+	Tools.Hooks.Hook(name, hook)\
+end\
+\
+function Substance.LandLine(name: string, steps: {any}): any\
+	return Tools.LandLine(name, steps)\
+end\
+\
+function Substance.Batch(requests: {any}): any\
+	return Tools.Batch(requests)\
+end\
+\
+function Substance.Fission(trigger: string, targets: {any})\
+	Tools.Fission(trigger, targets)\
+end\
+\
+function Substance.River(name: string): any\
+	return React.River(name)\
+end\
+\
+function Substance.Flux(name: string, schema: {[string]: any}?, authority: string?): any\
+	return React.Flux(name, schema, authority)\
+end\
+\
+Substance.Fossil = Tools.Fossil\
+Substance.Type = Particle.Type\
+\
+return Substance\
+"},
+{"Repl/_Packages/Substance/Async","ModuleScript","-- Substance\
+-- Async/init.lua\
+-- Plinko Labs\
+\
+local Reaction = require(script.Reaction)\
+local Branch = require(script.Branch)\
+\
+return {\
+	Reaction = Reaction,\
+	Branch = Branch,\
+}\
+"},
+{"Repl/_Packages/Substance/Async/Branch","ModuleScript","-- Substance\
+-- Async/Branch.lua\
+-- Plinko Labs\
+\
+export type BranchTable = {[string]: (any) -> any}\
+\
+local Branch = {}\
+\
+function Branch.Resolve(value: any, table: BranchTable): any\
+	if type(value) == \"string\" and table[value] then\
+		return table[value](value)\
+	end\
+\
+	if type(value) == \"table\" and type(value.Branch) == \"string\" and table[value.Branch] then\
+		return table[value.Branch](value)\
+	end\
+\
+	if table.Default then\
+		return table.Default(value)\
+	end\
+\
+	return nil\
+end\
+\
+return Branch\
+"},
+{"Repl/_Packages/Substance/Async/Promise","ModuleScript","--[[\
+	An implementation of Promises similar to Promise/A+.\
+]]\
+\
+local ERROR_NON_PROMISE_IN_LIST = \"Non-promise value passed into %s at index %s\"\
+local ERROR_NON_LIST = \"Please pass a list of promises to %s\"\
+local ERROR_NON_FUNCTION = \"Please pass a handler function to %s!\"\
+local MODE_KEY_METATABLE = { __mode = \"k\" }\
+\
+local function isCallable(value)\
+	if type(value) == \"function\" then\
+		return true\
+	end\
+\
+	if type(value) == \"table\" then\
+		local metatable = getmetatable(value)\
+		if metatable and type(rawget(metatable, \"__call\")) == \"function\" then\
+			return true\
+		end\
+	end\
+\
+	return false\
+end\
+\
+--[[\
+	Creates an enum dictionary with some metamethods to prevent common mistakes.\
+]]\
+local function makeEnum(enumName, members)\
+	local enum = {}\
+\
+	for _, memberName in ipairs(members) do\
+		enum[memberName] = memberName\
+	end\
+\
+	return setmetatable(enum, {\
+		__index = function(_, k)\
+			error(string.format(\"%s is not in %s!\", k, enumName), 2)\
+		end,\
+		__newindex = function()\
+			error(string.format(\"Creating new members in %s is not allowed!\", enumName), 2)\
+		end,\
+	})\
+end\
+\
+--[=[\
+	An object to represent runtime errors that occur during execution.\
+	Promises that experience an error like this will be rejected with\
+	an instance of this object.\
+\
+	@class Error\
+]=]\
+local Error\
+do\
+	Error = {\
+		Kind = makeEnum(\"Promise.Error.Kind\", {\
+			\"ExecutionError\",\
+			\"AlreadyCancelled\",\
+			\"NotResolvedInTime\",\
+			\"TimedOut\",\
+		}),\
+	}\
+	Error.__index = Error\
+\
+	function Error.new(options, parent)\
+		options = options or {}\
+		return setmetatable({\
+			error = tostring(options.error) or \"[This error has no error text.]\",\
+			trace = options.trace,\
+			context = options.context,\
+			kind = options.kind,\
+			parent = parent,\
+			createdTick = os.clock(),\
+			createdTrace = debug.traceback(),\
+		}, Error)\
+	end\
+\
+	function Error.is(anything)\
+		if type(anything) == \"table\" then\
+			local metatable = getmetatable(anything)\
+\
+			if type(metatable) == \"table\" then\
+				return rawget(anything, \"error\") ~= nil and type(rawget(metatable, \"extend\")) == \"function\"\
+			end\
+		end\
+\
+		return false\
+	end\
+\
+	function Error.isKind(anything, kind)\
+		assert(kind ~= nil, \"Argument #2 to Promise.Error.isKind must not be nil\")\
+\
+		return Error.is(anything) and anything.kind == kind\
+	end\
+\
+	function Error:extend(options)\
+		options = options or {}\
+\
+		options.kind = options.kind or self.kind\
+\
+		return Error.new(options, self)\
+	end\
+\
+	function Error:getErrorChain()\
+		local runtimeErrors = { self }\
+\
+		while runtimeErrors[#runtimeErrors].parent do\
+			table.insert(runtimeErrors, runtimeErrors[#runtimeErrors].parent)\
+		end\
+\
+		return runtimeErrors\
+	end\
+\
+	function Error:__tostring()\
+		local errorStrings = {\
+			string.format(\"-- Promise.Error(%s) --\", self.kind or \"?\"),\
+		}\
+\
+		for _, runtimeError in ipairs(self:getErrorChain()) do\
+			table.insert(\
+				errorStrings,\
+				table.concat({\
+					runtimeError.trace or runtimeError.error,\
+					runtimeError.context,\
+				}, \"\\n\")\
+			)\
+		end\
+\
+		return table.concat(errorStrings, \"\\n\")\
+	end\
+end\
+\
+--[[\
+	Packs a number of arguments into a table and returns its length.\
+\
+	Used to cajole varargs without dropping sparse values.\
+]]\
+local function pack(...)\
+	return select(\"#\", ...), { ... }\
+end\
+\
+--[[\
+	Returns first value (success), and packs all following values.\
+]]\
+local function packResult(success, ...)\
+	return success, select(\"#\", ...), { ... }\
+end\
+\
+local function makeErrorHandler(traceback)\
+	assert(traceback ~= nil, \"traceback is nil\")\
+\
+	return function(err)\
+		-- If the error object is already a table, forward it directly.\
+		-- Should we extend the error here and add our own trace?\
+\
+		if type(err) == \"table\" then\
+			return err\
+		end\
+\
+		return Error.new({\
+			error = err,\
+			kind = Error.Kind.ExecutionError,\
+			trace = debug.traceback(tostring(err), 2),\
+			context = \"Promise created at:\\n\\n\" .. traceback,\
+		})\
+	end\
+end\
+\
+--[[\
+	Calls a Promise executor with error handling.\
+]]\
+local function runExecutor(traceback, callback, ...)\
+	return packResult(xpcall(callback, makeErrorHandler(traceback), ...))\
+end\
+\
+--[[\
+	Creates a function that invokes a callback with correct error handling and\
+	resolution mechanisms.\
+]]\
+local function createAdvancer(traceback, callback, resolve, reject)\
+	return function(...)\
+		local ok, resultLength, result = runExecutor(traceback, callback, ...)\
+\
+		if ok then\
+			resolve(unpack(result, 1, resultLength))\
+		else\
+			reject(result[1])\
+		end\
+	end\
+end\
+\
+local function isEmpty(t)\
+	return next(t) == nil\
+end\
+\
+--[=[\
+	An enum value used to represent the Promise's status.\
+	@interface Status\
+	@tag enum\
+	@within Promise\
+	.Started \"Started\" -- The Promise is executing, and not settled yet.\
+	.Resolved \"Resolved\" -- The Promise finished successfully.\
+	.Rejected \"Rejected\" -- The Promise was rejected.\
+	.Cancelled \"Cancelled\" -- The Promise was cancelled before it finished.\
+]=]\
+--[=[\
+	@prop Status Status\
+	@within Promise\
+	@readonly\
+	@tag enums\
+	A table containing all members of the `Status` enum, e.g., `Promise.Status.Resolved`.\
+]=]\
+--[=[\
+	A Promise is an object that represents a value that will exist in the future, but doesn't right now.\
+	Promises allow you to then attach callbacks that can run once the value becomes available (known as *resolving*),\
+	or if an error has occurred (known as *rejecting*).\
+\
+	@class Promise\
+	@__index prototype\
+]=]\
+local Promise = {\
+	Error = Error,\
+	Status = makeEnum(\"Promise.Status\", { \"Started\", \"Resolved\", \"Rejected\", \"Cancelled\" }),\
+	_getTime = os.clock,\
+	_timeEvent = game:GetService(\"RunService\").Heartbeat,\
+	_unhandledRejectionCallbacks = {},\
+}\
+Promise.prototype = {}\
+Promise.__index = Promise.prototype\
+\
+function Promise._new(traceback, callback, parent)\
+	if parent ~= nil and not Promise.is(parent) then\
+		error(\"Argument #2 to Promise.new must be a promise or nil\", 2)\
+	end\
+\
+	local self = {\
+		-- The executor thread.\
+		_thread = nil,\
+\
+		-- Used to locate where a promise was created\
+		_source = traceback,\
+\
+		_status = Promise.Status.Started,\
+\
+		-- A table containing a list of all results, whether success or failure.\
+		-- Only valid if _status is set to something besides Started\
+		_values = nil,\
+\
+		-- Lua doesn't like sparse arrays very much, so we explicitly store the\
+		-- length of _values to handle middle nils.\
+		_valuesLength = -1,\
+\
+		-- Tracks if this Promise has no error observers..\
+		_unhandledRejection = true,\
+\
+		-- Queues representing functions we should invoke when we update!\
+		_queuedResolve = {},\
+		_queuedReject = {},\
+		_queuedFinally = {},\
+\
+		-- The function to run when/if this promise is cancelled.\
+		_cancellationHook = nil,\
+\
+		-- The \"parent\" of this promise in a promise chain. Required for\
+		-- cancellation propagation upstream.\
+		_parent = parent,\
+\
+		-- Consumers are Promises that have chained onto this one.\
+		-- We track them for cancellation propagation downstream.\
+		_consumers = setmetatable({}, MODE_KEY_METATABLE),\
+	}\
+\
+	if parent and parent._status == Promise.Status.Started then\
+		parent._consumers[self] = true\
+	end\
+\
+	setmetatable(self, Promise)\
+\
+	local function resolve(...)\
+		self:_resolve(...)\
+	end\
+\
+	local function reject(...)\
+		self:_reject(...)\
+	end\
+\
+	local function onCancel(cancellationHook)\
+		if cancellationHook then\
+			if self._status == Promise.Status.Cancelled then\
+				cancellationHook()\
+			else\
+				self._cancellationHook = cancellationHook\
+			end\
+		end\
+\
+		return self._status == Promise.Status.Cancelled\
+	end\
+\
+	self._thread = coroutine.create(function()\
+		local ok, _, result = runExecutor(self._source, callback, resolve, reject, onCancel)\
+\
+		if not ok then\
+			reject(result[1])\
+		end\
+	end)\
+\
+	task.spawn(self._thread)\
+\
+	return self\
+end\
+\
+--[=[\
+	Construct a new Promise that will be resolved or rejected with the given callbacks.\
+\
+	If you `resolve` with a Promise, it will be chained onto.\
+\
+	You can safely yield within the executor function and it will not block the creating thread.\
+\
+	```lua\
+	local myFunction()\
+		return Promise.new(function(resolve, reject, onCancel)\
+			wait(1)\
+			resolve(\"Hello world!\")\
+		end)\
+	end\
+\
+	myFunction():andThen(print)\
+	```\
+\
+	You do not need to use `pcall` within a Promise. Errors that occur during execution will be caught and turned into a rejection automatically. If `error()` is called with a table, that table will be the rejection value. Otherwise, string errors will be converted into `Promise.Error(Promise.Error.Kind.ExecutionError)` objects for tracking debug information.\
+\
+	You may register an optional cancellation hook by using the `onCancel` argument:\
+\
+	* This should be used to abort any ongoing operations leading up to the promise being settled.\
+	* Call the `onCancel` function with a function callback as its only argument to set a hook which will in turn be called when/if the promise is cancelled.\
+	* `onCancel` returns `true` if the Promise was already cancelled when you called `onCancel`.\
+	* Calling `onCancel` with no argument will not override a previously set cancellation hook, but it will still return `true` if the Promise is currently cancelled.\
+	* You can set the cancellation hook at any time before resolving.\
+	* When a promise is cancelled, calls to `resolve` or `reject` will be ignored, regardless of if you set a cancellation hook or not.\
+\
+	:::caution\
+	If the Promise is cancelled, the `executor` thread is closed with `coroutine.close` after the cancellation hook is called.\
+\
+	You must perform any cleanup code in the cancellation hook: any time your executor yields, it **may never resume**.\
+	:::\
+\
+	@param executor (resolve: (...: any) -> (), reject: (...: any) -> (), onCancel: (abortHandler?: () -> ()) -> boolean) -> ()\
+	@return Promise\
+]=]\
+function Promise.new(executor)\
+	return Promise._new(debug.traceback(nil, 2), executor)\
+end\
+\
+function Promise:__tostring()\
+	return string.format(\"Promise(%s)\", self._status)\
+end\
+\
+--[=[\
+	The same as [Promise.new](/api/Promise#new), except execution begins after the next `Heartbeat` event.\
+\
+	This is a spiritual replacement for `spawn`, but it does not suffer from the same [issues](https://eryn.io/gist/3db84579866c099cdd5bb2ff37947cec) as `spawn`.\
+\
+	```lua\
+	local function waitForChild(instance, childName, timeout)\
+	  return Promise.defer(function(resolve, reject)\
+		local child = instance:WaitForChild(childName, timeout)\
+\
+		;(child and resolve or reject)(child)\
+	  end)\
+	end\
+	```\
+\
+	@param executor (resolve: (...: any) -> (), reject: (...: any) -> (), onCancel: (abortHandler?: () -> ()) -> boolean) -> ()\
+	@return Promise\
+]=]\
+function Promise.defer(executor)\
+	local traceback = debug.traceback(nil, 2)\
+	local promise\
+	promise = Promise._new(traceback, function(resolve, reject, onCancel)\
+		task.defer(function()\
+			local ok, _, result = runExecutor(traceback, executor, resolve, reject, onCancel)\
+\
+			if not ok then\
+				reject(result[1])\
+			end\
+		end)\
+	end)\
+\
+	return promise\
+end\
+\
+-- Backwards compatibility\
+Promise.async = Promise.defer\
+\
+--[=[\
+	Creates an immediately resolved Promise with the given value.\
+\
+	```lua\
+	-- Example using Promise.resolve to deliver cached values:\
+	function getSomething(name)\
+		if cache[name] then\
+			return Promise.resolve(cache[name])\
+		else\
+			return Promise.new(function(resolve, reject)\
+				local thing = getTheThing()\
+				cache[name] = thing\
+\
+				resolve(thing)\
+			end)\
+		end\
+	end\
+	```\
+\
+	@param ... any\
+	@return Promise<...any>\
+]=]\
+function Promise.resolve(...)\
+	local length, values = pack(...)\
+	return Promise._new(debug.traceback(nil, 2), function(resolve)\
+		resolve(unpack(values, 1, length))\
+	end)\
+end\
+\
+--[=[\
+	Creates an immediately rejected Promise with the given value.\
+\
+	:::caution\
+	Something needs to consume this rejection (i.e. `:catch()` it), otherwise it will emit an unhandled Promise rejection warning on the next frame. Thus, you should not create and store rejected Promises for later use. Only create them on-demand as needed.\
+	:::\
+\
+	@param ... any\
+	@return Promise<...any>\
+]=]\
+function Promise.reject(...)\
+	local length, values = pack(...)\
+	return Promise._new(debug.traceback(nil, 2), function(_, reject)\
+		reject(unpack(values, 1, length))\
+	end)\
+end\
+\
+--[[\
+	Runs a non-promise-returning function as a Promise with the\
+  given arguments.\
+]]\
+function Promise._try(traceback, callback, ...)\
+	local valuesLength, values = pack(...)\
+\
+	return Promise._new(traceback, function(resolve)\
+		resolve(callback(unpack(values, 1, valuesLength)))\
+	end)\
+end\
+\
+--[=[\
+	Begins a Promise chain, calling a function and returning a Promise resolving with its return value. If the function errors, the returned Promise will be rejected with the error. You can safely yield within the Promise.try callback.\
+\
+	:::info\
+	`Promise.try` is similar to [Promise.promisify](#promisify), except the callback is invoked immediately instead of returning a new function.\
+	:::\
+\
+	```lua\
+	Promise.try(function()\
+		return math.random(1, 2) == 1 and \"ok\" or error(\"Oh an error!\")\
+	end)\
+		:andThen(function(text)\
+			print(text)\
+		end)\
+		:catch(function(err)\
+			warn(\"Something went wrong\")\
+		end)\
+	```\
+\
+	@param callback (...: T...) -> ...any\
+	@param ... T... -- Additional arguments passed to `callback`\
+	@return Promise\
+]=]\
+function Promise.try(callback, ...)\
+	return Promise._try(debug.traceback(nil, 2), callback, ...)\
+end\
+\
+--[[\
+	Returns a new promise that:\
+		* is resolved when all input promises resolve\
+		* is rejected if ANY input promises reject\
+]]\
+function Promise._all(traceback, promises, amount)\
+	if type(promises) ~= \"table\" then\
+		error(string.format(ERROR_NON_LIST, \"Promise.all\"), 3)\
+	end\
+\
+	-- We need to check that each value is a promise here so that we can produce\
+	-- a proper error rather than a rejected promise with our error.\
+	for i, promise in pairs(promises) do\
+		if not Promise.is(promise) then\
+			error(string.format(ERROR_NON_PROMISE_IN_LIST, \"Promise.all\", tostring(i)), 3)\
+		end\
+	end\
+\
+	-- If there are no values then return an already resolved promise.\
+	if #promises == 0 or amount == 0 then\
+		return Promise.resolve({})\
+	end\
+\
+	return Promise._new(traceback, function(resolve, reject, onCancel)\
+		-- An array to contain our resolved values from the given promises.\
+		local resolvedValues = {}\
+		local newPromises = {}\
+\
+		-- Keep a count of resolved promises because just checking the resolved\
+		-- values length wouldn't account for promises that resolve with nil.\
+		local resolvedCount = 0\
+		local rejectedCount = 0\
+		local done = false\
+\
+		local function cancel()\
+			for _, promise in ipairs(newPromises) do\
+				promise:cancel()\
+			end\
+		end\
+\
+		-- Called when a single value is resolved and resolves if all are done.\
+		local function resolveOne(i, ...)\
+			if done then\
+				return\
+			end\
+\
+			resolvedCount = resolvedCount + 1\
+\
+			if amount == nil then\
+				resolvedValues[i] = ...\
+			else\
+				resolvedValues[resolvedCount] = ...\
+			end\
+\
+			if resolvedCount >= (amount or #promises) then\
+				done = true\
+				resolve(resolvedValues)\
+				cancel()\
+			end\
+		end\
+\
+		onCancel(cancel)\
+\
+		-- We can assume the values inside `promises` are all promises since we\
+		-- checked above.\
+		for i, promise in ipairs(promises) do\
+			newPromises[i] = promise:andThen(function(...)\
+				resolveOne(i, ...)\
+			end, function(...)\
+				rejectedCount = rejectedCount + 1\
+\
+				if amount == nil or #promises - rejectedCount < amount then\
+					cancel()\
+					done = true\
+\
+					reject(...)\
+				end\
+			end)\
+		end\
+\
+		if done then\
+			cancel()\
+		end\
+	end)\
+end\
+\
+--[=[\
+	Accepts an array of Promises and returns a new promise that:\
+	* is resolved after all input promises resolve.\
+	* is rejected if *any* input promises reject.\
+\
+	:::info\
+	Only the first return value from each promise will be present in the resulting array.\
+	:::\
+\
+	After any input Promise rejects, all other input Promises that are still pending will be cancelled if they have no other consumers.\
+\
+	```lua\
+	local promises = {\
+		returnsAPromise(\"example 1\"),\
+		returnsAPromise(\"example 2\"),\
+		returnsAPromise(\"example 3\"),\
+	}\
+\
+	return Promise.all(promises)\
+	```\
+\
+	@param promises {Promise<T>}\
+	@return Promise<{T}>\
+]=]\
+function Promise.all(promises)\
+	return Promise._all(debug.traceback(nil, 2), promises)\
+end\
+\
+--[=[\
+	Folds an array of values or promises into a single value. The array is traversed sequentially.\
+\
+	The reducer function can return a promise or value directly. Each iteration receives the resolved value from the previous, and the first receives your defined initial value.\
+\
+	The folding will stop at the first rejection encountered.\
+	```lua\
+	local basket = {\"blueberry\", \"melon\", \"pear\", \"melon\"}\
+	Promise.fold(basket, function(cost, fruit)\
+		if fruit == \"blueberry\" then\
+			return cost -- blueberries are free!\
+		else\
+			-- call a function that returns a promise with the fruit price\
+			return fetchPrice(fruit):andThen(function(fruitCost)\
+				return cost + fruitCost\
+			end)\
+		end\
+	end, 0)\
+	```\
+\
+	@since v3.1.0\
+	@param list {T | Promise<T>}\
+	@param reducer (accumulator: U, value: T, index: number) -> U | Promise<U>\
+	@param initialValue U\
+]=]\
+function Promise.fold(list, reducer, initialValue)\
+	assert(type(list) == \"table\", \"Bad argument #1 to Promise.fold: must be a table\")\
+	assert(isCallable(reducer), \"Bad argument #2 to Promise.fold: must be a function\")\
+\
+	local accumulator = Promise.resolve(initialValue)\
+	return Promise.each(list, function(resolvedElement, i)\
+		accumulator = accumulator:andThen(function(previousValueResolved)\
+			return reducer(previousValueResolved, resolvedElement, i)\
+		end)\
+	end):andThen(function()\
+		return accumulator\
+	end)\
+end\
+\
+--[=[\
+	Accepts an array of Promises and returns a Promise that is resolved as soon as `count` Promises are resolved from the input array. The resolved array values are in the order that the Promises resolved in. When this Promise resolves, all other pending Promises are cancelled if they have no other consumers.\
+\
+	`count` 0 results in an empty array. The resultant array will never have more than `count` elements.\
+\
+	```lua\
+	local promises = {\
+		returnsAPromise(\"example 1\"),\
+		returnsAPromise(\"example 2\"),\
+		returnsAPromise(\"example 3\"),\
+	}\
+\
+	return Promise.some(promises, 2) -- Only resolves with first 2 promises to resolve\
+	```\
+\
+	@param promises {Promise<T>}\
+	@param count number\
+	@return Promise<{T}>\
+]=]\
+function Promise.some(promises, count)\
+	assert(type(count) == \"number\", \"Bad argument #2 to Promise.some: must be a number\")\
+\
+	return Promise._all(debug.traceback(nil, 2), promises, count)\
+end\
+\
+--[=[\
+	Accepts an array of Promises and returns a Promise that is resolved as soon as *any* of the input Promises resolves. It will reject only if *all* input Promises reject. As soon as one Promises resolves, all other pending Promises are cancelled if they have no other consumers.\
+\
+	Resolves directly with the value of the first resolved Promise. This is essentially [[Promise.some]] with `1` count, except the Promise resolves with the value directly instead of an array with one element.\
+\
+	```lua\
+	local promises = {\
+		returnsAPromise(\"example 1\"),\
+		returnsAPromise(\"example 2\"),\
+		returnsAPromise(\"example 3\"),\
+	}\
+\
+	return Promise.any(promises) -- Resolves with first value to resolve (only rejects if all 3 rejected)\
+	```\
+\
+	@param promises {Promise<T>}\
+	@return Promise<T>\
+]=]\
+function Promise.any(promises)\
+	return Promise._all(debug.traceback(nil, 2), promises, 1):andThen(function(values)\
+		return values[1]\
+	end)\
+end\
+\
+--[=[\
+	Accepts an array of Promises and returns a new Promise that resolves with an array of in-place Statuses when all input Promises have settled. This is equivalent to mapping `promise:finally` over the array of Promises.\
+\
+	```lua\
+	local promises = {\
+		returnsAPromise(\"example 1\"),\
+		returnsAPromise(\"example 2\"),\
+		returnsAPromise(\"example 3\"),\
+	}\
+\
+	return Promise.allSettled(promises)\
+	```\
+\
+	@param promises {Promise<T>}\
+	@return Promise<{Status}>\
+]=]\
+function Promise.allSettled(promises)\
+	if type(promises) ~= \"table\" then\
+		error(string.format(ERROR_NON_LIST, \"Promise.allSettled\"), 2)\
+	end\
+\
+	-- We need to check that each value is a promise here so that we can produce\
+	-- a proper error rather than a rejected promise with our error.\
+	for i, promise in pairs(promises) do\
+		if not Promise.is(promise) then\
+			error(string.format(ERROR_NON_PROMISE_IN_LIST, \"Promise.allSettled\", tostring(i)), 2)\
+		end\
+	end\
+\
+	-- If there are no values then return an already resolved promise.\
+	if #promises == 0 then\
+		return Promise.resolve({})\
+	end\
+\
+	return Promise._new(debug.traceback(nil, 2), function(resolve, _, onCancel)\
+		-- An array to contain our resolved values from the given promises.\
+		local fates = {}\
+		local newPromises = {}\
+\
+		-- Keep a count of resolved promises because just checking the resolved\
+		-- values length wouldn't account for promises that resolve with nil.\
+		local finishedCount = 0\
+\
+		-- Called when a single value is resolved and resolves if all are done.\
+		local function resolveOne(i, ...)\
+			finishedCount = finishedCount + 1\
+\
+			fates[i] = ...\
+\
+			if finishedCount >= #promises then\
+				resolve(fates)\
+			end\
+		end\
+\
+		onCancel(function()\
+			for _, promise in ipairs(newPromises) do\
+				promise:cancel()\
+			end\
+		end)\
+\
+		-- We can assume the values inside `promises` are all promises since we\
+		-- checked above.\
+		for i, promise in ipairs(promises) do\
+			newPromises[i] = promise:finally(function(...)\
+				resolveOne(i, ...)\
+			end)\
+		end\
+	end)\
+end\
+\
+--[=[\
+	Accepts an array of Promises and returns a new promise that is resolved or rejected as soon as any Promise in the array resolves or rejects.\
+\
+	:::warning\
+	If the first Promise to settle from the array settles with a rejection, the resulting Promise from `race` will reject.\
+\
+	If you instead want to tolerate rejections, and only care about at least one Promise resolving, you should use [Promise.any](#any) or [Promise.some](#some) instead.\
+	:::\
+\
+	All other Promises that don't win the race will be cancelled if they have no other consumers.\
+\
+	```lua\
+	local promises = {\
+		returnsAPromise(\"example 1\"),\
+		returnsAPromise(\"example 2\"),\
+		returnsAPromise(\"example 3\"),\
+	}\
+\
+	return Promise.race(promises) -- Only returns 1st value to resolve or reject\
+	```\
+\
+	@param promises {Promise<T>}\
+	@return Promise<T>\
+]=]\
+function Promise.race(promises)\
+	assert(type(promises) == \"table\", string.format(ERROR_NON_LIST, \"Promise.race\"))\
+\
+	for i, promise in pairs(promises) do\
+		assert(Promise.is(promise), string.format(ERROR_NON_PROMISE_IN_LIST, \"Promise.race\", tostring(i)))\
+	end\
+\
+	return Promise._new(debug.traceback(nil, 2), function(resolve, reject, onCancel)\
+		local newPromises = {}\
+		local finished = false\
+\
+		local function cancel()\
+			for _, promise in ipairs(newPromises) do\
+				promise:cancel()\
+			end\
+		end\
+\
+		local function finalize(callback)\
+			return function(...)\
+				cancel()\
+				finished = true\
+				return callback(...)\
+			end\
+		end\
+\
+		if onCancel(finalize(reject)) then\
+			return\
+		end\
+\
+		for i, promise in ipairs(promises) do\
+			newPromises[i] = promise:andThen(finalize(resolve), finalize(reject))\
+		end\
+\
+		if finished then\
+			cancel()\
+		end\
+	end)\
+end\
+\
+--[=[\
+	Iterates serially over the given an array of values, calling the predicate callback on each value before continuing.\
+\
+	If the predicate returns a Promise, we wait for that Promise to resolve before moving on to the next item\
+	in the array.\
+\
+	:::info\
+	`Promise.each` is similar to `Promise.all`, except the Promises are ran in order instead of all at once.\
+\
+	But because Promises are eager, by the time they are created, they're already running. Thus, we need a way to defer creation of each Promise until a later time.\
+\
+	The predicate function exists as a way for us to operate on our data instead of creating a new closure for each Promise. If you would prefer, you can pass in an array of functions, and in the predicate, call the function and return its return value.\
+	:::\
+\
+	```lua\
+	Promise.each({\
+		\"foo\",\
+		\"bar\",\
+		\"baz\",\
+		\"qux\"\
+	}, function(value, index)\
+		return Promise.delay(1):andThen(function()\
+		print((\"%d) Got %s!\"):format(index, value))\
+		end)\
+	end)\
+\
+	--[[\
+		(1 second passes)\
+		> 1) Got foo!\
+		(1 second passes)\
+		> 2) Got bar!\
+		(1 second passes)\
+		> 3) Got baz!\
+		(1 second passes)\
+		> 4) Got qux!\
+	]]\
+	```\
+\
+	If the Promise a predicate returns rejects, the Promise from `Promise.each` is also rejected with the same value.\
+\
+	If the array of values contains a Promise, when we get to that point in the list, we wait for the Promise to resolve before calling the predicate with the value.\
+\
+	If a Promise in the array of values is already Rejected when `Promise.each` is called, `Promise.each` rejects with that value immediately (the predicate callback will never be called even once). If a Promise in the list is already Cancelled when `Promise.each` is called, `Promise.each` rejects with `Promise.Error(Promise.Error.Kind.AlreadyCancelled`). If a Promise in the array of values is Started at first, but later rejects, `Promise.each` will reject with that value and iteration will not continue once iteration encounters that value.\
+\
+	Returns a Promise containing an array of the returned/resolved values from the predicate for each item in the array of values.\
+\
+	If this Promise returned from `Promise.each` rejects or is cancelled for any reason, the following are true:\
+	- Iteration will not continue.\
+	- Any Promises within the array of values will now be cancelled if they have no other consumers.\
+	- The Promise returned from the currently active predicate will be cancelled if it hasn't resolved yet.\
+\
+	@since 3.0.0\
+	@param list {T | Promise<T>}\
+	@param predicate (value: T, index: number) -> U | Promise<U>\
+	@return Promise<{U}>\
+]=]\
+function Promise.each(list, predicate)\
+	assert(type(list) == \"table\", string.format(ERROR_NON_LIST, \"Promise.each\"))\
+	assert(isCallable(predicate), string.format(ERROR_NON_FUNCTION, \"Promise.each\"))\
+\
+	return Promise._new(debug.traceback(nil, 2), function(resolve, reject, onCancel)\
+		local results = {}\
+		local promisesToCancel = {}\
+\
+		local cancelled = false\
+\
+		local function cancel()\
+			for _, promiseToCancel in ipairs(promisesToCancel) do\
+				promiseToCancel:cancel()\
+			end\
+		end\
+\
+		onCancel(function()\
+			cancelled = true\
+\
+			cancel()\
+		end)\
+\
+		-- We need to preprocess the list of values and look for Promises.\
+		-- If we find some, we must register our andThen calls now, so that those Promises have a consumer\
+		-- from us registered. If we don't do this, those Promises might get cancelled by something else\
+		-- before we get to them in the series because it's not possible to tell that we plan to use it\
+		-- unless we indicate it here.\
+\
+		local preprocessedList = {}\
+\
+		for index, value in ipairs(list) do\
+			if Promise.is(value) then\
+				if value:getStatus() == Promise.Status.Cancelled then\
+					cancel()\
+					return reject(Error.new({\
+						error = \"Promise is cancelled\",\
+						kind = Error.Kind.AlreadyCancelled,\
+						context = string.format(\
+							\"The Promise that was part of the array at index %d passed into Promise.each was already cancelled when Promise.each began.\\n\\nThat Promise was created at:\\n\\n%s\",\
+							index,\
+							value._source\
+						),\
+					}))\
+				elseif value:getStatus() == Promise.Status.Rejected then\
+					cancel()\
+					return reject(select(2, value:await()))\
+				end\
+\
+				-- Chain a new Promise from this one so we only cancel ours\
+				local ourPromise = value:andThen(function(...)\
+					return ...\
+				end)\
+\
+				table.insert(promisesToCancel, ourPromise)\
+				preprocessedList[index] = ourPromise\
+			else\
+				preprocessedList[index] = value\
+			end\
+		end\
+\
+		for index, value in ipairs(preprocessedList) do\
+			if Promise.is(value) then\
+				local success\
+				success, value = value:await()\
+\
+				if not success then\
+					cancel()\
+					return reject(value)\
+				end\
+			end\
+\
+			if cancelled then\
+				return\
+			end\
+\
+			local predicatePromise = Promise.resolve(predicate(value, index))\
+\
+			table.insert(promisesToCancel, predicatePromise)\
+\
+			local success, result = predicatePromise:await()\
+\
+			if not success then\
+				cancel()\
+				return reject(result)\
+			end\
+\
+			results[index] = result\
+		end\
+\
+		resolve(results)\
+	end)\
+end\
+\
+--[=[\
+	Checks whether the given object is a Promise via duck typing. This only checks if the object is a table and has an `andThen` method.\
+\
+	@param object any\
+	@return boolean -- `true` if the given `object` is a Promise.\
+]=]\
+function Promise.is(object)\
+	if type(object) ~= \"table\" then\
+		return false\
+	end\
+\
+	local objectMetatable = getmetatable(object)\
+\
+	if objectMetatable == Promise then\
+		-- The Promise came from this library.\
+		return true\
+	elseif objectMetatable == nil then\
+		-- No metatable, but we should still chain onto tables with andThen methods\
+		return isCallable(object.andThen)\
+	elseif\
+		type(objectMetatable) == \"table\"\
+		and type(rawget(objectMetatable, \"__index\")) == \"table\"\
+		and isCallable(rawget(rawget(objectMetatable, \"__index\"), \"andThen\"))\
+	then\
+		-- Maybe this came from a different or older Promise library.\
+		return true\
+	end\
+\
+	return false\
+end\
+\
+--[=[\
+	Wraps a function that yields into one that returns a Promise.\
+\
+	Any errors that occur while executing the function will be turned into rejections.\
+\
+	:::info\
+	`Promise.promisify` is similar to [Promise.try](#try), except the callback is returned as a callable function instead of being invoked immediately.\
+	:::\
+\
+	```lua\
+	local sleep = Promise.promisify(wait)\
+\
+	sleep(1):andThen(print)\
+	```\
+\
+	```lua\
+	local isPlayerInGroup = Promise.promisify(function(player, groupId)\
+		return player:IsInGroup(groupId)\
+	end)\
+	```\
+\
+	@param callback (...: any) -> ...any\
+	@return (...: any) -> Promise\
+]=]\
+function Promise.promisify(callback)\
+	return function(...)\
+		return Promise._try(debug.traceback(nil, 2), callback, ...)\
+	end\
+end\
+\
+--[=[\
+	Returns a Promise that resolves after `seconds` seconds have passed. The Promise resolves with the actual amount of time that was waited.\
+\
+	This function is a wrapper around `task.delay`.\
+\
+	:::warning\
+	Passing NaN, +Infinity, -Infinity, 0, or any other number less than the duration of a Heartbeat will cause the promise to resolve on the very next Heartbeat.\
+	:::\
+\
+	```lua\
+		Promise.delay(5):andThenCall(print, \"This prints after 5 seconds\")\
+	```\
+\
+	@function delay\
+	@within Promise\
+	@param seconds number\
+	@return Promise<number>\
+]=]\
+function Promise.delay(seconds)\
+	assert(type(seconds) == \"number\", \"Bad argument #1 to Promise.delay, must be a number.\")\
+	local startTime = Promise._getTime()\
+	return Promise._new(debug.traceback(nil, 2), function(resolve)\
+		task.delay(seconds, function()\
+			resolve(Promise._getTime() - startTime)\
+		end)\
+	end)\
+end\
+\
+--[=[\
+	Returns a new Promise that resolves if the chained Promise resolves within `seconds` seconds, or rejects if execution time exceeds `seconds`. The chained Promise will be cancelled if the timeout is reached.\
+\
+	Rejects with `rejectionValue` if it is non-nil. If a `rejectionValue` is not given, it will reject with a `Promise.Error(Promise.Error.Kind.TimedOut)`. This can be checked with [[Error.isKind]].\
+\
+	```lua\
+	getSomething():timeout(5):andThen(function(something)\
+		-- got something and it only took at max 5 seconds\
+	end):catch(function(e)\
+		-- Either getting something failed or the time was exceeded.\
+\
+		if Promise.Error.isKind(e, Promise.Error.Kind.TimedOut) then\
+			warn(\"Operation timed out!\")\
+		else\
+			warn(\"Operation encountered an error!\")\
+		end\
+	end)\
+	```\
+\
+	Sugar for:\
+\
+	```lua\
+	Promise.race({\
+		Promise.delay(seconds):andThen(function()\
+			return Promise.reject(\
+				rejectionValue == nil\
+				and Promise.Error.new({ kind = Promise.Error.Kind.TimedOut })\
+				or rejectionValue\
+			)\
+		end),\
+		promise\
+	})\
+	```\
+\
+	@param seconds number\
+	@param rejectionValue? any -- The value to reject with if the timeout is reached\
+	@return Promise\
+]=]\
+function Promise.prototype:timeout(seconds, rejectionValue)\
+	local traceback = debug.traceback(nil, 2)\
+\
+	return Promise.race({\
+		Promise.delay(seconds):andThen(function()\
+			return Promise.reject(rejectionValue == nil and Error.new({\
+				kind = Error.Kind.TimedOut,\
+				error = \"Timed out\",\
+				context = string.format(\
+					\"Timeout of %d seconds exceeded.\\n:timeout() called at:\\n\\n%s\",\
+					seconds,\
+					traceback\
+				),\
+			}) or rejectionValue)\
+		end),\
+		self,\
+	})\
+end\
+\
+--[=[\
+	Returns the current Promise status.\
+\
+	@return Status\
+]=]\
+function Promise.prototype:getStatus()\
+	return self._status\
+end\
+\
+--[[\
+	Creates a new promise that receives the result of this promise.\
+\
+	The given callbacks are invoked depending on that result.\
+]]\
+function Promise.prototype:_andThen(traceback, successHandler, failureHandler)\
+	self._unhandledRejection = false\
+\
+	-- If we are already cancelled, we return a cancelled Promise\
+	if self._status == Promise.Status.Cancelled then\
+		local promise = Promise.new(function() end)\
+		promise:cancel()\
+\
+		return promise\
+	end\
+\
+	-- Create a new promise to follow this part of the chain\
+	return Promise._new(traceback, function(resolve, reject, onCancel)\
+		-- Our default callbacks just pass values onto the next promise.\
+		-- This lets success and failure cascade correctly!\
+\
+		local successCallback = resolve\
+		if successHandler then\
+			successCallback = createAdvancer(traceback, successHandler, resolve, reject)\
+		end\
+\
+		local failureCallback = reject\
+		if failureHandler then\
+			failureCallback = createAdvancer(traceback, failureHandler, resolve, reject)\
+		end\
+\
+		if self._status == Promise.Status.Started then\
+			-- If we haven't resolved yet, put ourselves into the queue\
+			table.insert(self._queuedResolve, successCallback)\
+			table.insert(self._queuedReject, failureCallback)\
+\
+			onCancel(function()\
+				-- These are guaranteed to exist because the cancellation handler is guaranteed to only\
+				-- be called at most once\
+				if self._status == Promise.Status.Started then\
+					table.remove(self._queuedResolve, table.find(self._queuedResolve, successCallback))\
+					table.remove(self._queuedReject, table.find(self._queuedReject, failureCallback))\
+				end\
+			end)\
+		elseif self._status == Promise.Status.Resolved then\
+			-- This promise has already resolved! Trigger success immediately.\
+			successCallback(unpack(self._values, 1, self._valuesLength))\
+		elseif self._status == Promise.Status.Rejected then\
+			-- This promise died a terrible death! Trigger failure immediately.\
+			failureCallback(unpack(self._values, 1, self._valuesLength))\
+		end\
+	end, self)\
+end\
+\
+--[=[\
+	Chains onto an existing Promise and returns a new Promise.\
+\
+	:::warning\
+	Within the failure handler, you should never assume that the rejection value is a string. Some rejections within the Promise library are represented by [[Error]] objects. If you want to treat it as a string for debugging, you should call `tostring` on it first.\
+	:::\
+\
+	You can return a Promise from the success or failure handler and it will be chained onto.\
+\
+	Calling `andThen` on a cancelled Promise returns a cancelled Promise.\
+\
+	:::tip\
+	If the Promise returned by `andThen` is cancelled, `successHandler` and `failureHandler` will not run.\
+\
+	To run code no matter what, use [Promise:finally].\
+	:::\
+\
+	@param successHandler (...: any) -> ...any\
+	@param failureHandler? (...: any) -> ...any\
+	@return Promise<...any>\
+]=]\
+function Promise.prototype:andThen(successHandler, failureHandler)\
+	assert(successHandler == nil or isCallable(successHandler), string.format(ERROR_NON_FUNCTION, \"Promise:andThen\"))\
+	assert(failureHandler == nil or isCallable(failureHandler), string.format(ERROR_NON_FUNCTION, \"Promise:andThen\"))\
+\
+	return self:_andThen(debug.traceback(nil, 2), successHandler, failureHandler)\
+end\
+\
+--[=[\
+	Shorthand for `Promise:andThen(nil, failureHandler)`.\
+\
+	Returns a Promise that resolves if the `failureHandler` worked without encountering an additional error.\
+\
+	:::warning\
+	Within the failure handler, you should never assume that the rejection value is a string. Some rejections within the Promise library are represented by [[Error]] objects. If you want to treat it as a string for debugging, you should call `tostring` on it first.\
+	:::\
+\
+	Calling `catch` on a cancelled Promise returns a cancelled Promise.\
+\
+	:::tip\
+	If the Promise returned by `catch` is cancelled,  `failureHandler` will not run.\
+\
+	To run code no matter what, use [Promise:finally].\
+	:::\
+\
+	@param failureHandler (...: any) -> ...any\
+	@return Promise<...any>\
+]=]\
+function Promise.prototype:catch(failureHandler)\
+	assert(failureHandler == nil or isCallable(failureHandler), string.format(ERROR_NON_FUNCTION, \"Promise:catch\"))\
+	return self:_andThen(debug.traceback(nil, 2), nil, failureHandler)\
+end\
+\
+--[=[\
+	Similar to [Promise.andThen](#andThen), except the return value is the same as the value passed to the handler. In other words, you can insert a `:tap` into a Promise chain without affecting the value that downstream Promises receive.\
+\
+	```lua\
+		getTheValue()\
+		:tap(print)\
+		:andThen(function(theValue)\
+			print(\"Got\", theValue, \"even though print returns nil!\")\
+		end)\
+	```\
+\
+	If you return a Promise from the tap handler callback, its value will be discarded but `tap` will still wait until it resolves before passing the original value through.\
+\
+	@param tapHandler (...: any) -> ...any\
+	@return Promise<...any>\
+]=]\
+function Promise.prototype:tap(tapHandler)\
+	assert(isCallable(tapHandler), string.format(ERROR_NON_FUNCTION, \"Promise:tap\"))\
+	return self:_andThen(debug.traceback(nil, 2), function(...)\
+		local callbackReturn = tapHandler(...)\
+\
+		if Promise.is(callbackReturn) then\
+			local length, values = pack(...)\
+			return callbackReturn:andThen(function()\
+				return unpack(values, 1, length)\
+			end)\
+		end\
+\
+		return ...\
+	end)\
+end\
+\
+--[=[\
+	Attaches an `andThen` handler to this Promise that calls the given callback with the predefined arguments. The resolved value is discarded.\
+\
+	```lua\
+		promise:andThenCall(someFunction, \"some\", \"arguments\")\
+	```\
+\
+	This is sugar for\
+\
+	```lua\
+		promise:andThen(function()\
+		return someFunction(\"some\", \"arguments\")\
+		end)\
+	```\
+\
+	@param callback (...: any) -> any\
+	@param ...? any -- Additional arguments which will be passed to `callback`\
+	@return Promise\
+]=]\
+function Promise.prototype:andThenCall(callback, ...)\
+	assert(isCallable(callback), string.format(ERROR_NON_FUNCTION, \"Promise:andThenCall\"))\
+	local length, values = pack(...)\
+	return self:_andThen(debug.traceback(nil, 2), function()\
+		return callback(unpack(values, 1, length))\
+	end)\
+end\
+\
+--[=[\
+	Attaches an `andThen` handler to this Promise that discards the resolved value and returns the given value from it.\
+\
+	```lua\
+		promise:andThenReturn(\"some\", \"values\")\
+	```\
+\
+	This is sugar for\
+\
+	```lua\
+		promise:andThen(function()\
+			return \"some\", \"values\"\
+		end)\
+	```\
+\
+	:::caution\
+	Promises are eager, so if you pass a Promise to `andThenReturn`, it will begin executing before `andThenReturn` is reached in the chain. Likewise, if you pass a Promise created from [[Promise.reject]] into `andThenReturn`, it's possible that this will trigger the unhandled rejection warning. If you need to return a Promise, it's usually best practice to use [[Promise.andThen]].\
+	:::\
+\
+	@param ... any -- Values to return from the function\
+	@return Promise\
+]=]\
+function Promise.prototype:andThenReturn(...)\
+	local length, values = pack(...)\
+	return self:_andThen(debug.traceback(nil, 2), function()\
+		return unpack(values, 1, length)\
+	end)\
+end\
+\
+--[=[\
+	Cancels this promise, preventing the promise from resolving or rejecting. Does not do anything if the promise is already settled.\
+\
+	Cancellations will propagate upwards and downwards through chained promises.\
+\
+	Promises will only be cancelled if all of their consumers are also cancelled. This is to say that if you call `andThen` twice on the same promise, and you cancel only one of the child promises, it will not cancel the parent promise until the other child promise is also cancelled.\
+\
+	```lua\
+		promise:cancel()\
+	```\
+]=]\
+function Promise.prototype:cancel()\
+	if self._status ~= Promise.Status.Started then\
+		return\
+	end\
+\
+	self._status = Promise.Status.Cancelled\
+\
+	if self._cancellationHook then\
+		self._cancellationHook()\
+	end\
+\
+	coroutine.close(self._thread)\
+\
+	if self._parent then\
+		self._parent:_consumerCancelled(self)\
+	end\
+\
+	for child in pairs(self._consumers) do\
+		child:cancel()\
+	end\
+\
+	self:_finalize()\
+end\
+\
+--[[\
+	Used to decrease the number of consumers by 1, and if there are no more,\
+	cancel this promise.\
+]]\
+function Promise.prototype:_consumerCancelled(consumer)\
+	if self._status ~= Promise.Status.Started then\
+		return\
+	end\
+\
+	self._consumers[consumer] = nil\
+\
+	if next(self._consumers) == nil then\
+		self:cancel()\
+	end\
+end\
+\
+--[[\
+	Used to set a handler for when the promise resolves, rejects, or is\
+	cancelled.\
+]]\
+function Promise.prototype:_finally(traceback, finallyHandler)\
+	self._unhandledRejection = false\
+\
+	local promise = Promise._new(traceback, function(resolve, reject, onCancel)\
+		local handlerPromise\
+\
+		onCancel(function()\
+			-- The finally Promise is not a proper consumer of self. We don't care about the resolved value.\
+			-- All we care about is running at the end. Therefore, if self has no other consumers, it's safe to\
+			-- cancel. We don't need to hold out cancelling just because there's a finally handler.\
+			self:_consumerCancelled(self)\
+\
+			if handlerPromise then\
+				handlerPromise:cancel()\
+			end\
+		end)\
+\
+		local finallyCallback = resolve\
+		if finallyHandler then\
+			finallyCallback = function(...)\
+				local ok, _, resultList = runExecutor(traceback, finallyHandler, ...)\
+				local result = resultList[1]\
+				if not ok then\
+					return reject(result)\
+				end\
+\
+				if Promise.is(result) then\
+					handlerPromise = result\
+\
+					result\
+						:finally(function(status)\
+							if status ~= Promise.Status.Rejected then\
+								resolve(self)\
+							end\
+						end)\
+						:catch(function(...)\
+							reject(...)\
+						end)\
+				else\
+					resolve(self)\
+				end\
+			end\
+		end\
+\
+		if self._status == Promise.Status.Started then\
+			-- The promise is not settled, so queue this.\
+			table.insert(self._queuedFinally, finallyCallback)\
+		else\
+			-- The promise already settled or was cancelled, run the callback now.\
+			finallyCallback(self._status)\
+		end\
+	end)\
+\
+	return promise\
+end\
+\
+--[=[\
+	Set a handler that will be called regardless of the promise's fate. The handler is called when the promise is\
+	resolved, rejected, *or* cancelled.\
+\
+	Returns a new Promise that:\
+	- resolves with the same values that this Promise resolves with.\
+	- rejects with the same values that this Promise rejects with.\
+	- is cancelled if this Promise is cancelled.\
+\
+	If the value you return from the handler is a Promise:\
+	- We wait for the Promise to resolve, but we ultimately discard the resolved value.\
+	- If the returned Promise rejects, the Promise returned from `finally` will reject with the rejected value from the\
+	*returned* promise.\
+	- If the `finally` Promise is cancelled, and you returned a Promise from the handler, we cancel that Promise too.\
+\
+	Otherwise, the return value from the `finally` handler is entirely discarded.\
+\
+	:::note Cancellation\
+	As of Promise v4, `Promise:finally` does not count as a consumer of the parent Promise for cancellation purposes.\
+	This means that if all of a Promise's consumers are cancelled and the only remaining callbacks are finally handlers,\
+	the Promise is cancelled and the finally callbacks run then and there.\
+\
+	Cancellation still propagates through the `finally` Promise though: if you cancel the `finally` Promise, it can cancel\
+	its parent Promise if it had no other consumers. Likewise, if the parent Promise is cancelled, the `finally` Promise\
+	will also be cancelled.\
+	:::\
+\
+	```lua\
+	local thing = createSomething()\
+\
+	doSomethingWith(thing)\
+		:andThen(function()\
+			print(\"It worked!\")\
+			-- do something..\
+		end)\
+		:catch(function()\
+			warn(\"Oh no it failed!\")\
+		end)\
+		:finally(function()\
+			-- either way, destroy thing\
+\
+			thing:Destroy()\
+		end)\
+\
+	```\
+\
+	@param finallyHandler (status: Status) -> ...any\
+	@return Promise<...any>\
+]=]\
+function Promise.prototype:finally(finallyHandler)\
+	assert(finallyHandler == nil or isCallable(finallyHandler), string.format(ERROR_NON_FUNCTION, \"Promise:finally\"))\
+	return self:_finally(debug.traceback(nil, 2), finallyHandler)\
+end\
+\
+--[=[\
+	Same as `andThenCall`, except for `finally`.\
+\
+	Attaches a `finally` handler to this Promise that calls the given callback with the predefined arguments.\
+\
+	@param callback (...: any) -> any\
+	@param ...? any -- Additional arguments which will be passed to `callback`\
+	@return Promise\
+]=]\
+function Promise.prototype:finallyCall(callback, ...)\
+	assert(isCallable(callback), string.format(ERROR_NON_FUNCTION, \"Promise:finallyCall\"))\
+	local length, values = pack(...)\
+	return self:_finally(debug.traceback(nil, 2), function()\
+		return callback(unpack(values, 1, length))\
+	end)\
+end\
+\
+--[=[\
+	Attaches a `finally` handler to this Promise that discards the resolved value and returns the given value from it.\
+\
+	```lua\
+		promise:finallyReturn(\"some\", \"values\")\
+	```\
+\
+	This is sugar for\
+\
+	```lua\
+		promise:finally(function()\
+			return \"some\", \"values\"\
+		end)\
+	```\
+\
+	@param ... any -- Values to return from the function\
+	@return Promise\
+]=]\
+function Promise.prototype:finallyReturn(...)\
+	local length, values = pack(...)\
+	return self:_finally(debug.traceback(nil, 2), function()\
+		return unpack(values, 1, length)\
+	end)\
+end\
+\
+--[=[\
+	Yields the current thread until the given Promise completes. Returns the Promise's status, followed by the values that the promise resolved or rejected with.\
+\
+	@yields\
+	@return Status -- The Status representing the fate of the Promise\
+	@return ...any -- The values the Promise resolved or rejected with.\
+]=]\
+function Promise.prototype:awaitStatus()\
+	self._unhandledRejection = false\
+\
+	if self._status == Promise.Status.Started then\
+		local thread = coroutine.running()\
+\
+		self\
+			:finally(function()\
+				task.spawn(thread)\
+			end)\
+			-- The finally promise can propagate rejections, so we attach a catch handler to prevent the unhandled\
+			-- rejection warning from appearing\
+			:catch(\
+				function() end\
+			)\
+\
+		coroutine.yield()\
+	end\
+\
+	if self._status == Promise.Status.Resolved then\
+		return self._status, unpack(self._values, 1, self._valuesLength)\
+	elseif self._status == Promise.Status.Rejected then\
+		return self._status, unpack(self._values, 1, self._valuesLength)\
+	end\
+\
+	return self._status\
+end\
+\
+local function awaitHelper(status, ...)\
+	return status == Promise.Status.Resolved, ...\
+end\
+\
+--[=[\
+	Yields the current thread until the given Promise completes. Returns true if the Promise resolved, followed by the values that the promise resolved or rejected with.\
+\
+	:::caution\
+	If the Promise gets cancelled, this function will return `false`, which is indistinguishable from a rejection. If you need to differentiate, you should use [[Promise.awaitStatus]] instead.\
+	:::\
+\
+	```lua\
+		local worked, value = getTheValue():await()\
+\
+	if worked then\
+		print(\"got\", value)\
+	else\
+		warn(\"it failed\")\
+	end\
+	```\
+\
+	@yields\
+	@return boolean -- `true` if the Promise successfully resolved\
+	@return ...any -- The values the Promise resolved or rejected with.\
+]=]\
+function Promise.prototype:await()\
+	return awaitHelper(self:awaitStatus())\
+end\
+\
+local function expectHelper(status, ...)\
+	if status ~= Promise.Status.Resolved then\
+		error((...) == nil and \"Expected Promise rejected with no value.\" or (...), 3)\
+	end\
+\
+	return ...\
+end\
+\
+--[=[\
+	Yields the current thread until the given Promise completes. Returns the values that the promise resolved with.\
+\
+	```lua\
+	local worked = pcall(function()\
+		print(\"got\", getTheValue():expect())\
+	end)\
+\
+	if not worked then\
+		warn(\"it failed\")\
+	end\
+	```\
+\
+	This is essentially sugar for:\
+\
+	```lua\
+	select(2, assert(promise:await()))\
+	```\
+\
+	**Errors** if the Promise rejects or gets cancelled.\
+\
+	@error any -- Errors with the rejection value if this Promise rejects or gets cancelled.\
+	@yields\
+	@return ...any -- The values the Promise resolved with.\
+]=]\
+function Promise.prototype:expect()\
+	return expectHelper(self:awaitStatus())\
+end\
+\
+-- Backwards compatibility\
+Promise.prototype.awaitValue = Promise.prototype.expect\
+\
+--[[\
+	Intended for use in tests.\
+\
+	Similar to await(), but instead of yielding if the promise is unresolved,\
+	_unwrap will throw. This indicates an assumption that a promise has\
+	resolved.\
+]]\
+function Promise.prototype:_unwrap()\
+	if self._status == Promise.Status.Started then\
+		error(\"Promise has not resolved or rejected.\", 2)\
+	end\
+\
+	local success = self._status == Promise.Status.Resolved\
+\
+	return success, unpack(self._values, 1, self._valuesLength)\
+end\
+\
+function Promise.prototype:_resolve(...)\
+	if self._status ~= Promise.Status.Started then\
+		if Promise.is((...)) then\
+			(...):_consumerCancelled(self)\
+		end\
+		return\
+	end\
+\
+	-- If the resolved value was a Promise, we chain onto it!\
+	if Promise.is((...)) then\
+		-- Without this warning, arguments sometimes mysteriously disappear\
+		if select(\"#\", ...) > 1 then\
+			local message = string.format(\
+				\"When returning a Promise from andThen, extra arguments are \" .. \"discarded! See:\\n\\n%s\",\
+				self._source\
+			)\
+			warn(message)\
+		end\
+\
+		local chainedPromise = ...\
+\
+		local promise = chainedPromise:andThen(function(...)\
+			self:_resolve(...)\
+		end, function(...)\
+			local maybeRuntimeError = chainedPromise._values[1]\
+\
+			-- Backwards compatibility < v2\
+			if chainedPromise._error then\
+				maybeRuntimeError = Error.new({\
+					error = chainedPromise._error,\
+					kind = Error.Kind.ExecutionError,\
+					context = \"[No stack trace available as this Promise originated from an older version of the Promise library (< v2)]\",\
+				})\
+			end\
+\
+			if Error.isKind(maybeRuntimeError, Error.Kind.ExecutionError) then\
+				return self:_reject(maybeRuntimeError:extend({\
+					error = \"This Promise was chained to a Promise that errored.\",\
+					trace = \"\",\
+					context = string.format(\
+						\"The Promise at:\\n\\n%s\\n...Rejected because it was chained to the following Promise, which encountered an error:\\n\",\
+						self._source\
+					),\
+				}))\
+			end\
+\
+			self:_reject(...)\
+		end)\
+\
+		if promise._status == Promise.Status.Cancelled then\
+			self:cancel()\
+		elseif promise._status == Promise.Status.Started then\
+			-- Adopt ourselves into promise for cancellation propagation.\
+			self._parent = promise\
+			promise._consumers[self] = true\
+		end\
+\
+		return\
+	end\
+\
+	self._status = Promise.Status.Resolved\
+	self._valuesLength, self._values = pack(...)\
+\
+	-- We assume that these callbacks will not throw errors.\
+	for _, callback in ipairs(self._queuedResolve) do\
+		coroutine.wrap(callback)(...)\
+	end\
+\
+	self:_finalize()\
+end\
+\
+function Promise.prototype:_reject(...)\
+	if self._status ~= Promise.Status.Started then\
+		return\
+	end\
+\
+	self._status = Promise.Status.Rejected\
+	self._valuesLength, self._values = pack(...)\
+\
+	-- If there are any rejection handlers, call those!\
+	if not isEmpty(self._queuedReject) then\
+		-- We assume that these callbacks will not throw errors.\
+		for _, callback in ipairs(self._queuedReject) do\
+			coroutine.wrap(callback)(...)\
+		end\
+	else\
+		-- At this point, no one was able to observe the error.\
+		-- An error handler might still be attached if the error occurred\
+		-- synchronously. We'll wait one tick, and if there are still no\
+		-- observers, then we should put a message in the console.\
+\
+		local err = tostring((...))\
+\
+		coroutine.wrap(function()\
+			Promise._timeEvent:Wait()\
+\
+			-- Someone observed the error, hooray!\
+			if not self._unhandledRejection then\
+				return\
+			end\
+\
+			-- Build a reasonable message\
+			local message = string.format(\"Unhandled Promise rejection:\\n\\n%s\\n\\n%s\", err, self._source)\
+\
+			for _, callback in ipairs(Promise._unhandledRejectionCallbacks) do\
+				task.spawn(callback, self, unpack(self._values, 1, self._valuesLength))\
+			end\
+\
+			if Promise.TEST then\
+				-- Don't spam output when we're running tests.\
+				return\
+			end\
+\
+			warn(message)\
+		end)()\
+	end\
+\
+	self:_finalize()\
+end\
+\
+--[[\
+	Calls any :finally handlers. We need this to be a separate method and\
+	queue because we must call all of the finally callbacks upon a success,\
+	failure, *and* cancellation.\
+]]\
+function Promise.prototype:_finalize()\
+	for _, callback in ipairs(self._queuedFinally) do\
+		-- Purposefully not passing values to callbacks here, as it could be the\
+		-- resolved values, or rejected errors. If the developer needs the values,\
+		-- they should use :andThen or :catch explicitly.\
+		coroutine.wrap(callback)(self._status)\
+	end\
+\
+	self._queuedFinally = nil\
+	self._queuedReject = nil\
+	self._queuedResolve = nil\
+\
+	-- Clear references to other Promises to allow gc\
+	if not Promise.TEST then\
+		self._parent = nil\
+		self._consumers = nil\
+	end\
+\
+	task.defer(coroutine.close, self._thread)\
+end\
+\
+--[=[\
+	Chains a Promise from this one that is resolved if this Promise is already resolved, and rejected if it is not resolved at the time of calling `:now()`. This can be used to ensure your `andThen` handler occurs on the same frame as the root Promise execution.\
+\
+	```lua\
+	doSomething()\
+		:now()\
+		:andThen(function(value)\
+			print(\"Got\", value, \"synchronously.\")\
+		end)\
+	```\
+\
+	If this Promise is still running, Rejected, or Cancelled, the Promise returned from `:now()` will reject with the `rejectionValue` if passed, otherwise with a `Promise.Error(Promise.Error.Kind.NotResolvedInTime)`. This can be checked with [[Error.isKind]].\
+\
+	@param rejectionValue? any -- The value to reject with if the Promise isn't resolved\
+	@return Promise\
+]=]\
+function Promise.prototype:now(rejectionValue)\
+	local traceback = debug.traceback(nil, 2)\
+	if self._status == Promise.Status.Resolved then\
+		return self:_andThen(traceback, function(...)\
+			return ...\
+		end)\
+	else\
+		return Promise.reject(rejectionValue == nil and Error.new({\
+			kind = Error.Kind.NotResolvedInTime,\
+			error = \"This Promise was not resolved in time for :now()\",\
+			context = \":now() was called at:\\n\\n\" .. traceback,\
+		}) or rejectionValue)\
+	end\
+end\
+\
+--[=[\
+	Repeatedly calls a Promise-returning function up to `times` number of times, until the returned Promise resolves.\
+\
+	If the amount of retries is exceeded, the function will return the latest rejected Promise.\
+\
+	```lua\
+	local function canFail(a, b, c)\
+		return Promise.new(function(resolve, reject)\
+			-- do something that can fail\
+\
+			local failed, thing = doSomethingThatCanFail(a, b, c)\
+\
+			if failed then\
+				reject(\"it failed\")\
+			else\
+				resolve(thing)\
+			end\
+		end)\
+	end\
+\
+	local MAX_RETRIES = 10\
+	local value = Promise.retry(canFail, MAX_RETRIES, \"foo\", \"bar\", \"baz\") -- args to send to canFail\
+	```\
+\
+	@since 3.0.0\
+	@param callback (...: P) -> Promise<T>\
+	@param times number\
+	@param ...? P\
+	@return Promise<T>\
+]=]\
+function Promise.retry(callback, times, ...)\
+	assert(isCallable(callback), \"Parameter #1 to Promise.retry must be a function\")\
+	assert(type(times) == \"number\", \"Parameter #2 to Promise.retry must be a number\")\
+\
+	local args, length = { ... }, select(\"#\", ...)\
+\
+	return Promise.resolve(callback(...)):catch(function(...)\
+		if times > 0 then\
+			return Promise.retry(callback, times - 1, unpack(args, 1, length))\
+		else\
+			return Promise.reject(...)\
+		end\
+	end)\
+end\
+\
+--[=[\
+	Repeatedly calls a Promise-returning function up to `times` number of times, waiting `seconds` seconds between each\
+	retry, until the returned Promise resolves.\
+\
+	If the amount of retries is exceeded, the function will return the latest rejected Promise.\
+\
+	@since v3.2.0\
+	@param callback (...: P) -> Promise<T>\
+	@param times number\
+	@param seconds number\
+	@param ...? P\
+	@return Promise<T>\
+]=]\
+function Promise.retryWithDelay(callback, times, seconds, ...)\
+	assert(isCallable(callback), \"Parameter #1 to Promise.retry must be a function\")\
+	assert(type(times) == \"number\", \"Parameter #2 (times) to Promise.retry must be a number\")\
+	assert(type(seconds) == \"number\", \"Parameter #3 (seconds) to Promise.retry must be a number\")\
+\
+	local args, length = { ... }, select(\"#\", ...)\
+\
+	return Promise.resolve(callback(...)):catch(function(...)\
+		if times > 0 then\
+			Promise.delay(seconds):await()\
+\
+			return Promise.retryWithDelay(callback, times - 1, seconds, unpack(args, 1, length))\
+		else\
+			return Promise.reject(...)\
+		end\
+	end)\
+end\
+\
+--[=[\
+	Converts an event into a Promise which resolves the next time the event fires.\
+\
+	The optional `predicate` callback, if passed, will receive the event arguments and should return `true` or `false`, based on if this fired event should resolve the Promise or not. If `true`, the Promise resolves. If `false`, nothing happens and the predicate will be rerun the next time the event fires.\
+\
+	The Promise will resolve with the event arguments.\
+\
+	:::tip\
+	This function will work given any object with a `Connect` method. This includes all Roblox events.\
+	:::\
+\
+	```lua\
+	-- Creates a Promise which only resolves when `somePart` is touched\
+	-- by a part named `\"Something specific\"`.\
+	return Promise.fromEvent(somePart.Touched, function(part)\
+		return part.Name == \"Something specific\"\
+	end)\
+	```\
+\
+	@since 3.0.0\
+	@param event Event -- Any object with a `Connect` method. This includes all Roblox events.\
+	@param predicate? (...: P) -> boolean -- A function which determines if the Promise should resolve with the given value, or wait for the next event to check again.\
+	@return Promise<P>\
+]=]\
+function Promise.fromEvent(event, predicate)\
+	predicate = predicate or function()\
+		return true\
+	end\
+\
+	return Promise._new(debug.traceback(nil, 2), function(resolve, _, onCancel)\
+		local connection\
+		local shouldDisconnect = false\
+\
+		local function disconnect()\
+			connection:Disconnect()\
+			connection = nil\
+		end\
+\
+		-- We use shouldDisconnect because if the callback given to Connect is called before\
+		-- Connect returns, connection will still be nil. This happens with events that queue up\
+		-- events when there's nothing connected, such as RemoteEvents\
+\
+		connection = event:Connect(function(...)\
+			local callbackValue = predicate(...)\
+\
+			if callbackValue == true then\
+				resolve(...)\
+\
+				if connection then\
+					disconnect()\
+				else\
+					shouldDisconnect = true\
+				end\
+			elseif type(callbackValue) ~= \"boolean\" then\
+				error(\"Promise.fromEvent predicate should always return a boolean\")\
+			end\
+		end)\
+\
+		if shouldDisconnect and connection then\
+			return disconnect()\
+		end\
+\
+		onCancel(disconnect)\
+	end)\
+end\
+\
+--[=[\
+	Registers a callback that runs when an unhandled rejection happens. An unhandled rejection happens when a Promise\
+	is rejected, and the rejection is not observed with `:catch`.\
+\
+	The callback is called with the actual promise that rejected, followed by the rejection values.\
+\
+	@since v3.2.0\
+	@param callback (promise: Promise, ...: any) -- A callback that runs when an unhandled rejection happens.\
+	@return () -> () -- Function that unregisters the `callback` when called\
+]=]\
+function Promise.onUnhandledRejection(callback)\
+	table.insert(Promise._unhandledRejectionCallbacks, callback)\
+\
+	return function()\
+		local index = table.find(Promise._unhandledRejectionCallbacks, callback)\
+\
+		if index then\
+			table.remove(Promise._unhandledRejectionCallbacks, index)\
+		end\
+	end\
+end\
+\
+return Promise"},
+{"Repl/_Packages/Substance/Async/Reaction","ModuleScript","-- Substance\
+-- Async/Reaction.lua\
+-- Plinko Labs\
+\
+local Promise = require(script.Parent.Promise)\
+local Branch = require(script.Parent.Branch)\
+\
+export type Reaction = {\
+	Next: (self: Reaction, fn: (any) -> any) -> Reaction,\
+	Throw: (self: Reaction, fn: (string) -> any) -> Reaction,\
+	Conclusion: (self: Reaction, fn: () -> ()) -> Reaction,\
+	Await: (self: Reaction) -> any,\
+	Timeout: (self: Reaction, seconds: number) -> Reaction,\
+	Retry: (self: Reaction, attempts: number) -> Reaction,\
+	Decay: (self: Reaction, seconds: number) -> Reaction,\
+	Cancel: (self: Reaction) -> (),\
+	Branch: (self: Reaction, table: Branch.BranchTable) -> Reaction,\
+}\
+\
+local Reaction = {}\
+Reaction.__index = Reaction\
+\
+function Reaction.new(attempt: () -> any): Reaction\
+	local self = setmetatable({}, Reaction)\
+\
+	self._attempt = attempt\
+	self._retriesLeft = 0\
+	self._cancelled = false\
+	self._consumed = false\
+	self._reject = nil\
+	self._timeoutThread = nil\
+	self._decayThread = nil\
+\
+	self._promise = self:_dispatch()\
+\
+	self._promise:finally(function()\
+		if self._timeoutThread then\
+			task.cancel(self._timeoutThread)\
+			self._timeoutThread = nil\
+		end\
+		if self._decayThread then\
+			task.cancel(self._decayThread)\
+			self._decayThread = nil\
+		end\
+	end)\
+\
+	return (self :: any) :: Reaction\
+end\
+\
+function Reaction:_dispatch()\
+	return Promise.new(function(resolve, reject)\
+		self._reject = reject\
+\
+		local ok, result = pcall(self._attempt)\
+\
+		if self._cancelled then\
+			reject(\"cancelled\")\
+			return\
+		end\
+\
+		if ok then\
+			resolve(result)\
+			return\
+		end\
+\
+		if self._retriesLeft > 0 then\
+			self._retriesLeft -= 1\
+			self:_dispatch():andThen(resolve, reject)\
+			return\
+		end\
+\
+		reject(result)\
+	end)\
+end\
+\
+function Reaction:Next(fn: (any) -> any): Reaction\
+	self._consumed = true\
+	self._promise:andThen(fn)\
+	return self\
+end\
+\
+function Reaction:Throw(fn: (string) -> any): Reaction\
+	self._consumed = true\
+	self._promise:catch(fn)\
+	return self\
+end\
+\
+function Reaction:Conclusion(fn: () -> ()): Reaction\
+	self._promise:finally(fn)\
+	return self\
+end\
+\
+function Reaction:Await(): any\
+	self._consumed = true\
+	return self._promise:expect()\
+end\
+\
+function Reaction:Timeout(seconds: number): Reaction\
+	if self._timeoutThread then\
+		task.cancel(self._timeoutThread)\
+	end\
+\
+	self._timeoutThread = task.delay(seconds, function()\
+		if self._reject then\
+			self._reject(\"timeout\")\
+		end\
+	end)\
+\
+	return self\
+end\
+\
+function Reaction:Retry(attempts: number): Reaction\
+	self._retriesLeft = attempts\
+	return self\
+end\
+\
+function Reaction:Decay(seconds: number): Reaction\
+	if self._decayThread then\
+		task.cancel(self._decayThread)\
+	end\
+\
+	self._decayThread = task.delay(seconds, function()\
+		if not self._consumed and self._reject then\
+			self._reject(\"decayed\")\
+		end\
+	end)\
+\
+	return self\
+end\
+\
+function Reaction:Cancel()\
+	self._cancelled = true\
+	if self._reject then\
+		self._reject(\"cancelled\")\
+	end\
+end\
+\
+function Reaction:Branch(table: Branch.BranchTable): Reaction\
+	self:Next(function(value)\
+		return Branch.Resolve(value, table)\
+	end)\
+	return self\
+end\
+\
+return Reaction\
+"},
+{"Repl/_Packages/Substance/Particle","ModuleScript","-- Substance\
+-- Particle/init.lua\
+-- Plinko Labs\
+\
+local Schema = require(script.Schema)\
+local AtomModule = require(script.Atom)\
+local Molecule = require(script.Molecule)\
+local Dispatch = require(script.Dispatch)\
+local Registry = require(script.Registry)\
+local Hooks = require(script.Hooks)\
+local Fossil = require(script.Fossil)\
+local Types = require(script.Types)\
+local TypeSystem = require(script.Type)\
+\
+local Particle = {}\
+\
+Particle.Dispatch = Dispatch\
+Particle.Registry = Registry\
+Particle.Hooks = Hooks\
+Particle.Fossil = Fossil\
+Particle.Type = TypeSystem\
+\
+function Particle.Quark(name: string, definition: any)\
+	Schema.Quark(name, definition)\
+end\
+\
+function Particle.Gluon(name: string, shape: Types.Shape)\
+	Schema.Gluon(name, shape)\
+end\
+\
+function Particle.Define(name: string, shape: Types.Shape): Types.AtomHandle\
+	return AtomModule.Define(name, shape)\
+end\
+\
+function Particle.Compose(name: string, atoms: {any}, eventType: Types.EventType): Types.MoleculeHandle\
+	return Molecule.Compose(name, atoms, eventType)\
+end\
+\
+return Particle\
+"},
+{"Repl/_Packages/Substance/Particle/Atom","ModuleScript","-- Substance\
+-- Particle/Atom.lua\
+-- Plinko Labs\
+\
+local Registry = require(script.Parent.Registry)\
+local Dispatch = require(script.Parent.Dispatch)\
+local Types = require(script.Parent.Types)\
+\
+local Atom = {}\
+Atom.__index = Atom\
+\
+local isotopeCounter = 0\
+\
+local function wrap(name: string, shape: Types.Shape?): Types.AtomHandle\
+	return setmetatable({\
+		Name = name,\
+		Shape = shape,\
+	}, Atom) :: any\
+end\
+\
+function Atom.Define(name: string, shape: Types.Shape): Types.AtomHandle\
+	local channel = Registry.Ensure(name)\
+	channel.Shape = shape\
+	return wrap(name, shape)\
+end\
+\
+function Atom:Isotope(constraints: Types.Constraints): Types.AtomHandle\
+	isotopeCounter += 1\
+	local isotopeName = string.format(\"%s::Isotope%d\", self.Name, isotopeCounter)\
+\
+	local channel = Registry.Ensure(isotopeName)\
+	channel.Shape = self.Shape\
+	channel.Constraints = constraints\
+\
+	local handle = wrap(isotopeName, self.Shape)\
+	;(handle :: any)._constraints = constraints\
+	return handle\
+end\
+\
+function Atom:Compose(channelName: string, eventType: Types.EventType): Types.AtomHandle\
+	(self :: any)._channel = channelName\
+	Dispatch.Compose(channelName, self.Shape, eventType, (self :: any)._constraints)\
+	return self :: any\
+end\
+\
+function Atom:Post(payload: any, target: Player?): any\
+	local channelName = (self :: any)._channel or self.Name\
+	return Dispatch.Post(channelName, payload, target)\
+end\
+\
+function Atom:Subscribe(handler: (any, Player?) -> any): Types.Subscription\
+	local channelName = (self :: any)._channel or self.Name\
+	return Dispatch.Subscribe(channelName, handler)\
+end\
+\
+function Atom:Entangle(owner: Types.Authority): Types.AtomHandle\
+	local React = require(script.Parent.Parent.React)\
+	return React.Entangle(self, owner)\
+end\
+\
+function Atom:Set(_value: any)\
+	error(string.format(\"[Substance] '%s' is not Entangled, call :Entangle() first\", self.Name))\
+end\
+\
+function Atom:Get(): any\
+	error(string.format(\"[Substance] '%s' is not Entangled, call :Entangle() first\", self.Name))\
+end\
+\
+return Atom\
+"},
+{"Repl/_Packages/Substance/Particle/Dispatch","ModuleScript","-- Substance\
+-- Particle/Dispatch.lua\
+-- Plinko Labs\
+\
+local RunService = game:GetService(\"RunService\")\
+local Players = game:GetService(\"Players\")\
+\
+local Remotes = require(script.Parent.Remotes)\
+local Registry = require(script.Parent.Registry)\
+local Schema = require(script.Parent.Schema)\
+local Hooks = require(script.Parent.Hooks)\
+local Fossil = require(script.Parent.Fossil)\
+local Types = require(script.Parent.Types)\
+\
+local IS_SERVER = RunService:IsServer()\
+local IS_DEV = RunService:IsStudio()\
+\
+local Dispatch = {}\
+local bound: {[string]: boolean} = {}\
+\
+local function validatePayload(channel: Types.Channel, payload: any): (boolean, string?)\
+	if not IS_DEV then\
+		return true\
+	end\
+\
+	if channel.Shape then\
+		local ok, err = Schema.Validate(payload, channel.Shape)\
+		if not ok then\
+			return false, string.format(\"'%s' failed schema validation: %s\", channel.Name, err or \"unknown error\")\
+		end\
+	end\
+\
+	if not channel.Constraints then\
+		return true\
+	end\
+\
+	for field, validator in channel.Constraints do\
+		if not validator(payload[field]) then\
+			return false, string.format(\"'%s' failed constraint on field '%s'\", channel.Name, field)\
+		end\
+	end\
+\
+	return true\
+end\
+\
+local function callSubscribers(channel: Types.Channel, payload: any, player: Player?): any\
+	local result = nil\
+\
+	for _, handler in channel.Subscribers do\
+		local handlerResult = handler(payload, player)\
+		if handlerResult == nil then\
+			continue\
+		end\
+		result = handlerResult\
+	end\
+\
+	return result\
+end\
+\
+local function bind(channel: Types.Channel)\
+	if bound[channel.Name] then\
+		return\
+	end\
+	bound[channel.Name] = true\
+\
+	local instance = Remotes.Get(channel.Name, channel.EventType :: string)\
+\
+	if channel.EventType == \"Solve\" then\
+		if IS_SERVER then\
+			(instance :: RemoteFunction).OnServerInvoke = function(player: Player, payload: any): any\
+				payload = Hooks.RunPost(channel.Name, payload)\
+				local ok, err = validatePayload(channel, payload)\
+				if not ok then\
+					warn(\"[Substance] dropped incoming packet: \" .. (err :: string))\
+					return nil\
+				end\
+				Fossil.Record(channel.Name, \"Received\", payload)\
+				return callSubscribers(channel, payload, player)\
+			end\
+		else\
+			(instance :: RemoteFunction).OnClientInvoke = function(payload: any): any\
+				payload = Hooks.RunPost(channel.Name, payload)\
+				local ok, err = validatePayload(channel, payload)\
+				if not ok then\
+					warn(\"[Substance] dropped incoming packet: \" .. (err :: string))\
+					return nil\
+				end\
+				Fossil.Record(channel.Name, \"Received\", payload)\
+				return callSubscribers(channel, payload, nil)\
+			end\
+		end\
+		return\
+	end\
+\
+	local signal = if IS_SERVER then (instance :: RemoteEvent).OnServerEvent else (instance :: RemoteEvent).OnClientEvent\
+	signal:Connect(function(playerOrPayload: any, maybePayload: any)\
+		local player: Player? = nil\
+		local payload = playerOrPayload\
+\
+		if IS_SERVER then\
+			player = playerOrPayload\
+			payload = maybePayload\
+		end\
+\
+		payload = Hooks.RunPost(channel.Name, payload)\
+		local ok, err = validatePayload(channel, payload)\
+		if not ok then\
+			warn(\"[Substance] dropped incoming packet: \" .. (err :: string))\
+			return\
+		end\
+		Fossil.Record(channel.Name, \"Received\", payload)\
+		callSubscribers(channel, payload, player)\
+	end)\
+end\
+\
+function Dispatch.Compose(name: string, shape: Types.Shape?, eventType: Types.EventType, constraints: Types.Constraints?): Types.Channel\
+	local channel = Registry.Ensure(name)\
+	channel.Shape = shape or channel.Shape\
+	channel.EventType = eventType\
+	channel.Constraints = constraints or channel.Constraints\
+	bind(channel)\
+	return channel\
+end\
+\
+function Dispatch.Subscribe(name: string, handler: (any, Player?) -> any): Types.Subscription\
+	return Registry.AddSubscriber(name, handler)\
+end\
+\
+function Dispatch.Post(name: string, payload: any, target: Player?): any\
+	local channel = Registry.Get(name)\
+	assert(channel, string.format(\"[Substance] Post: channel '%s' is not composed\", name))\
+	assert(channel.EventType, string.format(\"[Substance] Post: channel '%s' has no event type, call :Compose() first\", name))\
+\
+	bind(channel)\
+\
+	local Async = require(script.Parent.Parent.Async)\
+\
+	return Async.Reaction.new(function()\
+		local outgoing = Hooks.RunPre(name, payload)\
+\
+		local ok, err = validatePayload(channel, outgoing)\
+		if not ok then\
+			warn(\"[Substance] \" .. (err :: string))\
+			error(\"validation_failed\", 0)\
+		end\
+\
+		Fossil.Record(name, \"Sent\", outgoing)\
+\
+		local instance = Remotes.Get(name, channel.EventType :: string)\
+\
+		if channel.EventType == \"Solve\" then\
+			if IS_SERVER then\
+				assert(target, string.format(\"[Substance] Post: '%s' is Solve and requires a target Player from the server\", name))\
+				return (instance :: RemoteFunction):InvokeClient(target, outgoing)\
+			end\
+			return (instance :: RemoteFunction):InvokeServer(outgoing)\
+		end\
+\
+		if IS_SERVER then\
+			if target then\
+				(instance :: RemoteEvent):FireClient(target, outgoing)\
+			else\
+				(instance :: RemoteEvent):FireAllClients(outgoing)\
+			end\
+		else\
+			(instance :: RemoteEvent):FireServer(outgoing)\
+		end\
+\
+		return true\
+	end)\
+end\
+\
+function Dispatch.Broadcast(name: string, payload: any, filter: ((Player) -> boolean)?)\
+	assert(IS_SERVER, \"[Substance] Broadcast can only be called from the server\")\
+\
+	local channel = Registry.Get(name)\
+	assert(channel, string.format(\"[Substance] Broadcast: channel '%s' is not composed\", name))\
+	bind(channel)\
+\
+	local outgoing = Hooks.RunPre(name, payload)\
+\
+	local ok, err = validatePayload(channel, outgoing)\
+	assert(ok, \"[Substance] \" .. tostring(err))\
+\
+	Fossil.Record(name, \"Sent\", outgoing)\
+\
+	local instance = Remotes.Get(name, channel.EventType :: string)\
+\
+	for _, player in Players:GetPlayers() do\
+		if filter and not filter(player) then\
+			continue\
+		end\
+\
+		if channel.EventType == \"Solve\" then\
+			task.spawn(function()\
+				(instance :: RemoteFunction):InvokeClient(player, outgoing)\
+			end)\
+			continue\
+		end\
+\
+		(instance :: RemoteEvent):FireClient(player, outgoing)\
+	end\
+end\
+\
+return Dispatch\
+"},
+{"Repl/_Packages/Substance/Particle/Fossil","ModuleScript","-- Substance\
+-- Particle/Fossil.lua\
+-- Plinko Labs\
+\
+local Fossil = {}\
+\
+local recording = false\
+local history: {any} = {}\
+\
+function Fossil.Start()\
+	recording = true\
+end\
+\
+function Fossil.Stop()\
+	recording = false\
+end\
+\
+function Fossil.Record(name: string, direction: string, payload: any)\
+	if not recording then\
+		return\
+	end\
+\
+	table.insert(history, {\
+		Name = name,\
+		Direction = direction,\
+		Payload = payload,\
+		Time = os.clock(),\
+	})\
+end\
+\
+function Fossil.Replay(handler: (any) -> ())\
+	for _, entry in history do\
+		handler(entry)\
+	end\
+end\
+\
+function Fossil.Export(): {any}\
+	local copy = table.create(#history)\
+	for index, entry in history do\
+		copy[index] = entry\
+	end\
+	return copy\
+end\
+\
+function Fossil.Clear()\
+	table.clear(history)\
+end\
+\
+return Fossil\
+"},
+{"Repl/_Packages/Substance/Particle/Hooks","ModuleScript","-- Substance\
+-- Particle/Hooks.lua\
+-- Plinko Labs\
+\
+local Hooks = {}\
+\
+local preHooks: {[string]: {(any) -> any}} = {}\
+local postHooks: {[string]: {(any) -> any}} = {}\
+\
+local function append(store: {[string]: {(any) -> any}}, name: string, hook: (any) -> any)\
+	local list = store[name]\
+	if not list then\
+		list = {}\
+		store[name] = list\
+	end\
+	table.insert(list, hook)\
+end\
+\
+local function run(store: {[string]: {(any) -> any}}, name: string, payload: any): any\
+	local list = store[name]\
+	if not list then\
+		return payload\
+	end\
+\
+	for _, hook in list do\
+		local result = hook(payload)\
+		if result == nil then\
+			continue\
+		end\
+		payload = result\
+	end\
+\
+	return payload\
+end\
+\
+function Hooks.Pre(name: string, hook: (any) -> any)\
+	append(preHooks, name, hook)\
+end\
+\
+function Hooks.Hook(name: string, hook: (any) -> any)\
+	append(postHooks, name, hook)\
+end\
+\
+function Hooks.RunPre(name: string, payload: any): any\
+	return run(preHooks, name, payload)\
+end\
+\
+function Hooks.RunPost(name: string, payload: any): any\
+	return run(postHooks, name, payload)\
+end\
+\
+return Hooks\
+"},
+{"Repl/_Packages/Substance/Particle/Molecule","ModuleScript","-- Substance\
+-- Particle/Molecule.lua\
+-- Plinko Labs\
+\
+local Registry = require(script.Parent.Registry)\
+local Dispatch = require(script.Parent.Dispatch)\
+local Types = require(script.Parent.Types)\
+local TypeDef = require(script.Parent.Type.TypeDef)\
+\
+local Molecule = {}\
+\
+local function nameOf(atom: any): string\
+	if type(atom) == \"string\" then\
+		return atom\
+	end\
+	return atom.Name\
+end\
+\
+local function mergeShape(atoms: {any}): Types.Shape\
+	local merged = {}\
+\
+	for _, atom in atoms do\
+		local channel = Registry.Get(nameOf(atom))\
+		local shape = if channel then channel.Shape else (type(atom) == \"table\" and atom.Shape or nil)\
+		if not shape or TypeDef.is(shape) then\
+			continue\
+		end\
+\
+		for field, fieldType in shape do\
+			merged[field] = fieldType\
+		end\
+	end\
+\
+	return merged\
+end\
+\
+function Molecule.Compose(name: string, atoms: {any}, eventType: Types.EventType): Types.MoleculeHandle\
+	local channel = Registry.Ensure(name)\
+	channel.IsMolecule = true\
+\
+	local atomNames = table.create(#atoms)\
+	for index, atom in atoms do\
+		atomNames[index] = nameOf(atom)\
+	end\
+	channel.AtomNames = atomNames\
+	channel.Shape = mergeShape(atoms)\
+\
+	Dispatch.Compose(name, channel.Shape, eventType)\
+\
+	return { Name = name }\
+end\
+\
+return Molecule\
+"},
+{"Repl/_Packages/Substance/Particle/Registry","ModuleScript","-- Substance\
+-- Particle/Registry.lua\
+-- Plinko Labs\
+\
+local Types = require(script.Parent.Types)\
+\
+local Registry = {}\
+\
+local channels: {[string]: Types.Channel} = {}\
+\
+function Registry.Ensure(name: string): Types.Channel\
+	local channel = channels[name]\
+	if channel then\
+		return channel\
+	end\
+\
+	channel = {\
+		Name = name,\
+		Subscribers = {},\
+		IsMolecule = false,\
+	}\
+	channels[name] = channel\
+	return channel\
+end\
+\
+function Registry.Get(name: string): Types.Channel?\
+	return channels[name]\
+end\
+\
+function Registry.AddSubscriber(name: string, handler: (any, Player?) -> any): Types.Subscription\
+	local channel = Registry.Ensure(name)\
+	table.insert(channel.Subscribers, handler)\
+\
+	return {\
+		Cancel = function()\
+			local index = table.find(channel.Subscribers, handler)\
+			if not index then\
+				return\
+			end\
+			table.remove(channel.Subscribers, index)\
+		end,\
+	}\
+end\
+\
+return Registry\
+"},
+{"Repl/_Packages/Substance/Particle/Remotes","ModuleScript","-- Substance\
+-- Particle/Remotes.lua\
+-- Plinko Labs\
+\
+local RunService = game:GetService(\"RunService\")\
+local ReplicatedStorage = game:GetService(\"ReplicatedStorage\")\
+\
+local IS_SERVER = RunService:IsServer()\
+\
+local CLASS_BY_TYPE = {\
+	Lazy = \"UnreliableRemoteEvent\",\
+	Strict = \"RemoteEvent\",\
+	Solve = \"RemoteFunction\",\
+}\
+\
+local Remotes = {}\
+local root: Folder? = nil\
+\
+local function getRoot(): Folder\
+	if root then\
+		return root\
+	end\
+\
+	if IS_SERVER then\
+		root = Instance.new(\"Folder\")\
+		root.Name = \"SubstanceRemotes\"\
+		root.Parent = ReplicatedStorage\
+		return root\
+	end\
+\
+	root = ReplicatedStorage:WaitForChild(\"SubstanceRemotes\")\
+	return root\
+end\
+\
+function Remotes.Get(channelName: string, eventType: string): Instance\
+	local className = CLASS_BY_TYPE[eventType]\
+	assert(className, string.format(\"[Substance] Unknown event type '%s'\", tostring(eventType)))\
+\
+	local folder = getRoot()\
+\
+	if not IS_SERVER then\
+		return folder:WaitForChild(channelName)\
+	end\
+\
+	local existing = folder:FindFirstChild(channelName)\
+	if existing then\
+		return existing\
+	end\
+\
+	local instance = Instance.new(className)\
+	instance.Name = channelName\
+	instance.Parent = folder\
+	return instance\
+end\
+\
+return Remotes\
+"},
+{"Repl/_Packages/Substance/Particle/Schema","ModuleScript","-- Substance\
+-- Particle/Schema.lua\
+-- Plinko Labs\
+\
+local TypeDef = require(script.Parent.Type.TypeDef)\
+local Type = require(script.Parent.Type)\
+\
+local Schema = {}\
+\
+local quarks: {[string]: TypeDef.TypeDef} = {}\
+local gluons: {[string]: TypeDef.TypeDef} = {}\
+\
+local LEGACY_PRIMITIVES: {[string]: () -> TypeDef.TypeDef} = {\
+	number = Type.number,\
+	string = Type.string,\
+	boolean = Type.bool,\
+	table = Type.table,\
+}\
+\
+function Schema.Quark(name: string, definition: any)\
+	if TypeDef.is(definition) then\
+		quarks[name] = definition\
+		return\
+	end\
+\
+	local legacy = LEGACY_PRIMITIVES[definition]\
+	assert(legacy, string.format(\"[Substance] Quark '%s': invalid type '%s'\", name, tostring(definition)))\
+	quarks[name] = legacy()\
+end\
+\
+function Schema.Gluon(name: string, shape: {[string]: any})\
+	gluons[name] = Schema.ResolveShape(shape)\
+end\
+\
+function Schema.GetGluon(name: string): TypeDef.TypeDef?\
+	return gluons[name]\
+end\
+\
+function Schema.Resolve(definition: any): TypeDef.TypeDef?\
+	if TypeDef.is(definition) then\
+		return definition\
+	end\
+\
+	if type(definition) ~= \"string\" then\
+		return nil\
+	end\
+\
+	if gluons[definition] then\
+		return gluons[definition]\
+	end\
+\
+	if quarks[definition] then\
+		return quarks[definition]\
+	end\
+\
+	local legacy = LEGACY_PRIMITIVES[definition]\
+	if legacy then\
+		return legacy()\
+	end\
+\
+	return nil\
+end\
+\
+function Schema.ResolveShape(shape: any): TypeDef.TypeDef\
+	if TypeDef.is(shape) then\
+		return shape :: TypeDef.TypeDef\
+	end\
+\
+	local resolvedFields = {}\
+\
+	for field, definition in shape :: {[string]: any} do\
+		local resolved = Schema.Resolve(definition)\
+		assert(resolved, string.format(\"[Substance] unknown type '%s' for field '%s'\", tostring(definition), field))\
+		resolvedFields[field] = resolved\
+	end\
+\
+	return Type.struct(resolvedFields)\
+end\
+\
+function Schema.Validate(value: any, shape: {[string]: any}): (boolean, string?, any)\
+	local structDef = Schema.ResolveShape(shape)\
+	return structDef:Validate(value)\
+end\
+\
+return Schema\
+"},
+{"Repl/_Packages/Substance/Particle/Type","ModuleScript","-- Substance\
+-- Particle/Type/init.lua\
+-- Plinko Labs\
+\
+return require(script.Constructors)\
+"},
+{"Repl/_Packages/Substance/Particle/Type/Constructors","ModuleScript","-- Substance\
+-- Particle/Type/Constructors.lua\
+-- Plinko Labs\
+\
+local TypeDef = require(script.Parent.TypeDef)\
+\
+export type TypeDef = TypeDef.TypeDef\
+\
+local Type = {}\
+\
+Type.is = TypeDef.is\
+\
+local function simple(kind: string): () -> TypeDef\
+	return function(): TypeDef\
+		return TypeDef.new(kind)\
+	end\
+end\
+\
+Type.table = simple(\"table\")\
+Type.string = simple(\"string\")\
+Type.number = simple(\"number\")\
+Type.bool = simple(\"bool\")\
+Type.buff = simple(\"buff\")\
+Type.float32 = simple(\"float32\")\
+Type.float64 = simple(\"float64\")\
+Type.uint8 = simple(\"uint8\")\
+Type.uint16 = simple(\"uint16\")\
+Type.uint32 = simple(\"uint32\")\
+Type.int8 = simple(\"int8\")\
+Type.int16 = simple(\"int16\")\
+Type.int32 = simple(\"int32\")\
+Type.any = simple(\"any\")\
+Type.never = simple(\"never\")\
+Type.unknown = simple(\"unknown\")\
+Type.nil_ = simple(\"nil\")\
+Type.none = TypeDef.new(\"nil\")\
+\
+Type.vec2 = simple(\"vec2\")\
+Type.vec3 = simple(\"vec3\")\
+Type.vec2int16 = simple(\"vec2int16\")\
+Type.cframe = simple(\"cframe\")\
+Type.color3 = simple(\"color3\")\
+Type.udim = simple(\"udim\")\
+Type.udim2 = simple(\"udim2\")\
+Type.rect = simple(\"rect\")\
+Type.region3 = simple(\"region3\")\
+Type.numberRange = simple(\"numberRange\")\
+Type.numberSequence = simple(\"numberSequence\")\
+Type.colorSequence = simple(\"colorSequence\")\
+Type.tweenInfo = simple(\"tweenInfo\")\
+Type.enumItem = simple(\"enumItem\")\
+\
+function Type.inst(className: string?): TypeDef\
+	local def = TypeDef.new(\"inst\")\
+	def._className = className\
+	return def\
+end\
+\
+function Type.struct(shape: {[string]: TypeDef}): TypeDef\
+	local def = TypeDef.new(\"struct\")\
+	def._struct = shape\
+	return def\
+end\
+\
+Type.shape = Type.struct\
+\
+function Type.array(element: TypeDef): TypeDef\
+	local def = TypeDef.new(\"array\")\
+	def._element = element\
+	return def\
+end\
+\
+function Type.tuple(...: TypeDef): TypeDef\
+	local def = TypeDef.new(\"tuple\")\
+	def._elements = { ... }\
+	return def\
+end\
+\
+function Type.map(keyType: TypeDef, valueType: TypeDef): TypeDef\
+	local def = TypeDef.new(\"map\")\
+	def._key = keyType\
+	def._value = valueType\
+	return def\
+end\
+\
+function Type.record(valueType: TypeDef): TypeDef\
+	local def = TypeDef.new(\"record\")\
+	def._value = valueType\
+	return def\
+end\
+\
+function Type.lazy(resolve: () -> TypeDef): TypeDef\
+	local def = TypeDef.new(\"lazy\")\
+	def._resolve = resolve\
+	return def\
+end\
+\
+local function assertStruct(def: TypeDef, fnName: string): {[string]: TypeDef}\
+	assert(def._struct, string.format(\"[Substance] Type.%s expects a struct TypeDef\", fnName))\
+	return def._struct :: {[string]: TypeDef}\
+end\
+\
+function Type.partial(structDef: TypeDef): TypeDef\
+	local source = assertStruct(structDef, \"partial\")\
+	local shape = {}\
+	for field, fieldType in source do\
+		shape[field] = fieldType:nullable()\
+	end\
+	return Type.struct(shape)\
+end\
+\
+function Type.pick(structDef: TypeDef, keys: {string}): TypeDef\
+	local source = assertStruct(structDef, \"pick\")\
+	local shape = {}\
+	for _, key in keys do\
+		shape[key] = source[key]\
+	end\
+	return Type.struct(shape)\
+end\
+\
+function Type.omit(structDef: TypeDef, keys: {string}): TypeDef\
+	local source = assertStruct(structDef, \"omit\")\
+	local excluded = {}\
+	for _, key in keys do\
+		excluded[key] = true\
+	end\
+\
+	local shape = {}\
+	for field, fieldType in source do\
+		if excluded[field] then\
+			continue\
+		end\
+		shape[field] = fieldType\
+	end\
+	return Type.struct(shape)\
+end\
+\
+function Type.merge(structA: TypeDef, structB: TypeDef): TypeDef\
+	local sourceA = assertStruct(structA, \"merge\")\
+	local sourceB = assertStruct(structB, \"merge\")\
+\
+	local shape = {}\
+	for field, fieldType in sourceA do\
+		shape[field] = fieldType\
+	end\
+	for field, fieldType in sourceB do\
+		shape[field] = fieldType\
+	end\
+	return Type.struct(shape)\
+end\
+\
+export type DefineTypeConfig = {\
+	Mask: () -> TypeDef,\
+	Validate: ((value: any) -> boolean)?,\
+}\
+\
+function Type.defineType(config: DefineTypeConfig): () -> TypeDef\
+	return function(): TypeDef\
+		local def = config.Mask()\
+		if config.Validate then\
+			def:where(config.Validate)\
+		end\
+		return def\
+	end\
+end\
+\
+return Type\
+"},
+{"Repl/_Packages/Substance/Particle/Type/TypeDef","ModuleScript","-- Substance\
+-- Particle/Type/TypeDef.lua\
+-- Plinko Labs\
+\
+export type Predicate = (value: any) -> boolean\
+\
+export type TypeDef = {\
+	_kind: string,\
+	_struct: {[string]: TypeDef}?,\
+	_element: TypeDef?,\
+	_elements: {TypeDef}?,\
+	_key: TypeDef?,\
+	_value: TypeDef?,\
+	_resolve: (() -> TypeDef)?,\
+	_className: string?,\
+	_nullable: boolean?,\
+	_default: any?,\
+	_unions: {TypeDef}?,\
+	_intersects: {TypeDef}?,\
+	_nots: {TypeDef}?,\
+	_wheres: {Predicate}?,\
+	_literal: any?,\
+	_enum: {any}?,\
+	_min: number?,\
+	_max: number?,\
+	_step: number?,\
+	_minLength: number?,\
+	_maxLength: number?,\
+	_pattern: string?,\
+	_minSize: number?,\
+	_maxSize: number?,\
+	_tag: string?,\
+	_describe: string?,\
+\
+	Validate: (self: TypeDef, value: any, path: string?) -> (boolean, string?, any),\
+	Check: (self: TypeDef, value: any) -> boolean,\
+	also: (self: TypeDef, other: TypeDef) -> TypeDef,\
+	Or: (self: TypeDef, other: TypeDef) -> TypeDef,\
+	Not: (self: TypeDef, other: TypeDef) -> TypeDef,\
+	nullable: (self: TypeDef) -> TypeDef,\
+	default: (self: TypeDef, value: any) -> TypeDef,\
+	where: (self: TypeDef, predicate: Predicate) -> TypeDef,\
+	literal: (self: TypeDef, value: any) -> TypeDef,\
+	enum: (self: TypeDef, values: {any}) -> TypeDef,\
+	min: (self: TypeDef, n: number) -> TypeDef,\
+	max: (self: TypeDef, n: number) -> TypeDef,\
+	bet: (self: TypeDef, minValue: number, maxValue: number) -> TypeDef,\
+	step: (self: TypeDef, n: number) -> TypeDef,\
+	minLength: (self: TypeDef, n: number) -> TypeDef,\
+	maxLength: (self: TypeDef, n: number) -> TypeDef,\
+	pattern: (self: TypeDef, p: string) -> TypeDef,\
+	minSize: (self: TypeDef, n: number) -> TypeDef,\
+	maxSize: (self: TypeDef, n: number) -> TypeDef,\
+	tag: (self: TypeDef, name: string) -> TypeDef,\
+	describe: (self: TypeDef, text: string) -> TypeDef,\
+}\
+\
+local TypeDef = {}\
+TypeDef.__index = TypeDef\
+TypeDef.__call = function(self: TypeDef, value: any): boolean\
+	return self:Check(value)\
+end\
+\
+local function label(self: TypeDef): string\
+	return self._describe or self._tag or self._kind\
+end\
+\
+local function tableSize(value: {[any]: any}): number\
+	local count = 0\
+	for _ in value do\
+		count += 1\
+	end\
+	return count\
+end\
+\
+local function deepEqual(a: any, b: any): boolean\
+	if a == b then\
+		return true\
+	end\
+	if typeof(a) ~= \"table\" or typeof(b) ~= \"table\" then\
+		return false\
+	end\
+	for key, value in a do\
+		if not deepEqual(value, b[key]) then\
+			return false\
+		end\
+	end\
+	for key in b do\
+		if a[key] == nil then\
+			return false\
+		end\
+	end\
+	return true\
+end\
+\
+function TypeDef.new(kind: string): TypeDef\
+	return setmetatable({ _kind = kind }, TypeDef) :: any\
+end\
+\
+function TypeDef.is(value: any): boolean\
+	return typeof(value) == \"table\" and getmetatable(value :: any) == TypeDef\
+end\
+\
+local baseCheckers: {[string]: (self: TypeDef, value: any, path: string) -> (boolean, string?)}\
+\
+local function checkPrimitive(luauType: string)\
+	return function(self: TypeDef, value: any, path: string): (boolean, string?)\
+		if typeof(value) ~= luauType then\
+			return false, string.format(\"expected %s at %s, got %s\", label(self), path, typeof(value))\
+		end\
+		return true\
+	end\
+end\
+\
+local function checkInteger(min: number, max: number)\
+	return function(self: TypeDef, value: any, path: string): (boolean, string?)\
+		if typeof(value) ~= \"number\" then\
+			return false, string.format(\"expected %s at %s, got %s\", label(self), path, typeof(value))\
+		end\
+		if value % 1 ~= 0 or value < min or value > max then\
+			return false, string.format(\"expected %s in [%d, %d] at %s, got %s\", label(self), min, max, path, tostring(value))\
+		end\
+		return true\
+	end\
+end\
+\
+baseCheckers = {\
+	table = checkPrimitive(\"table\"),\
+	string = checkPrimitive(\"string\"),\
+	number = checkPrimitive(\"number\"),\
+	bool = checkPrimitive(\"boolean\"),\
+	buff = checkPrimitive(\"buffer\"),\
+	float32 = checkPrimitive(\"number\"),\
+	float64 = checkPrimitive(\"number\"),\
+	uint8 = checkInteger(0, 255),\
+	uint16 = checkInteger(0, 65535),\
+	uint32 = checkInteger(0, 4294967295),\
+	int8 = checkInteger(-128, 127),\
+	int16 = checkInteger(-32768, 32767),\
+	int32 = checkInteger(-2147483648, 2147483647),\
+	any = function(): (boolean, string?)\
+		return true\
+	end,\
+	never = function(self: TypeDef, _value: any, path: string): (boolean, string?)\
+		return false, string.format(\"%s never accepts a value, at %s\", label(self), path)\
+	end,\
+	unknown = function(): (boolean, string?)\
+		return true\
+	end,\
+	[\"nil\"] = function(_self: TypeDef, value: any, path: string): (boolean, string?)\
+		if value ~= nil then\
+			return false, string.format(\"expected nil at %s\", path)\
+		end\
+		return true\
+	end,\
+	vec2 = checkPrimitive(\"Vector2\"),\
+	vec3 = checkPrimitive(\"Vector3\"),\
+	vec2int16 = checkPrimitive(\"Vector2int16\"),\
+	cframe = checkPrimitive(\"CFrame\"),\
+	color3 = checkPrimitive(\"Color3\"),\
+	udim = checkPrimitive(\"UDim\"),\
+	udim2 = checkPrimitive(\"UDim2\"),\
+	rect = checkPrimitive(\"Rect\"),\
+	region3 = checkPrimitive(\"Region3\"),\
+	numberRange = checkPrimitive(\"NumberRange\"),\
+	numberSequence = checkPrimitive(\"NumberSequence\"),\
+	colorSequence = checkPrimitive(\"ColorSequence\"),\
+	tweenInfo = checkPrimitive(\"TweenInfo\"),\
+	enumItem = checkPrimitive(\"EnumItem\"),\
+\
+	inst = function(self: TypeDef, value: any, path: string): (boolean, string?)\
+		if typeof(value) ~= \"Instance\" then\
+			return false, string.format(\"expected Instance at %s, got %s\", path, typeof(value))\
+		end\
+		if self._className and not (value :: Instance):IsA(self._className) then\
+			return false, string.format(\"expected Instance of class '%s' at %s, got '%s'\", self._className, path, (value :: Instance).ClassName)\
+		end\
+		return true\
+	end,\
+\
+	struct = function(self: TypeDef, value: any, path: string): (boolean, string?)\
+		if typeof(value) ~= \"table\" then\
+			return false, string.format(\"expected table at %s\", path)\
+		end\
+		local struct = self._struct :: {[string]: TypeDef}\
+		for field, fieldType in struct do\
+			local ok, err, resolved = fieldType:Validate(value[field], path .. \".\" .. field)\
+			if not ok then\
+				return false, err\
+			end\
+			if resolved ~= nil and resolved ~= value[field] then\
+				value[field] = resolved\
+			end\
+		end\
+		return true\
+	end,\
+\
+	array = function(self: TypeDef, value: any, path: string): (boolean, string?)\
+		if typeof(value) ~= \"table\" then\
+			return false, string.format(\"expected array at %s\", path)\
+		end\
+		local element = self._element :: TypeDef\
+		for index, item in value do\
+			local ok, err, resolved = element:Validate(item, string.format(\"%s[%s]\", path, tostring(index)))\
+			if not ok then\
+				return false, err\
+			end\
+			if resolved ~= nil and resolved ~= item then\
+				value[index] = resolved\
+			end\
+		end\
+		return true\
+	end,\
+\
+	tuple = function(self: TypeDef, value: any, path: string): (boolean, string?)\
+		if typeof(value) ~= \"table\" then\
+			return false, string.format(\"expected tuple at %s\", path)\
+		end\
+		local elements = self._elements :: {TypeDef}\
+		for index, elementType in elements do\
+			local ok, err, resolved = elementType:Validate(value[index], string.format(\"%s[%d]\", path, index))\
+			if not ok then\
+				return false, err\
+			end\
+			if resolved ~= nil and resolved ~= value[index] then\
+				value[index] = resolved\
+			end\
+		end\
+		return true\
+	end,\
+\
+	map = function(self: TypeDef, value: any, path: string): (boolean, string?)\
+		if typeof(value) ~= \"table\" then\
+			return false, string.format(\"expected map at %s\", path)\
+		end\
+		local keyType = self._key :: TypeDef\
+		local valueType = self._value :: TypeDef\
+		for key, item in value do\
+			local kok, kerr = keyType:Validate(key, path .. \".<key>\")\
+			if not kok then\
+				return false, kerr\
+			end\
+			local vok, verr = valueType:Validate(item, string.format(\"%s[%s]\", path, tostring(key)))\
+			if not vok then\
+				return false, verr\
+			end\
+		end\
+		return true\
+	end,\
+\
+	record = function(self: TypeDef, value: any, path: string): (boolean, string?)\
+		if typeof(value) ~= \"table\" then\
+			return false, string.format(\"expected record at %s\", path)\
+		end\
+		local valueType = self._value :: TypeDef\
+		for key, item in value do\
+			if type(key) ~= \"string\" then\
+				return false, string.format(\"expected string key at %s\", path)\
+			end\
+			local ok, err = valueType:Validate(item, string.format(\"%s.%s\", path, key))\
+			if not ok then\
+				return false, err\
+			end\
+		end\
+		return true\
+	end,\
+\
+	lazy = function(self: TypeDef, value: any, path: string): (boolean, string?)\
+		local resolved = (self._resolve :: () -> TypeDef)()\
+		local ok, err = resolved:Validate(value, path)\
+		return ok, err\
+	end,\
+\
+	custom = function(): (boolean, string?)\
+		return true\
+	end,\
+}\
+\
+function TypeDef:Validate(value: any, path: string?): (boolean, string?, any)\
+	path = path or \"$\"\
+\
+	if value == nil then\
+		if self._default ~= nil then\
+			value = self._default\
+		elseif self._nullable then\
+			return true, nil, nil\
+		end\
+	end\
+\
+	if self._nots then\
+		for _, notType in self._nots :: {TypeDef} do\
+			local ok = notType:Check(value)\
+			if ok then\
+				return false, string.format(\"%s must not match excluded type at %s\", label(self), path)\
+			end\
+		end\
+	end\
+\
+	if self._unions then\
+		local ok = self:_selfCheck(value, path)\
+		if not ok then\
+			for _, unionType in self._unions :: {TypeDef} do\
+				local uok, _uerr, uval = unionType:Validate(value, path)\
+				if uok then\
+					value = if uval ~= nil then uval else value\
+					ok = true\
+					break\
+				end\
+			end\
+		end\
+		if not ok then\
+			return false, string.format(\"value did not match %s or any union member at %s\", label(self), path)\
+		end\
+	else\
+		local ok, err = self:_selfCheck(value, path)\
+		if not ok then\
+			return false, err\
+		end\
+	end\
+\
+	if self._intersects then\
+		for _, andType in self._intersects :: {TypeDef} do\
+			local ok, err = andType:Validate(value, path)\
+			if not ok then\
+				return false, err\
+			end\
+		end\
+	end\
+\
+	local ok, err = self:_constraints(value, path)\
+	if not ok then\
+		return false, err\
+	end\
+\
+	return true, nil, value\
+end\
+\
+function TypeDef:_selfCheck(value: any, path: string): (boolean, string?)\
+	local checker = baseCheckers[self._kind]\
+	if not checker then\
+		return false, string.format(\"unknown type kind '%s' at %s\", self._kind, path)\
+	end\
+	return checker(self, value, path)\
+end\
+\
+function TypeDef:_constraints(value: any, path: string): (boolean, string?)\
+	if self._literal ~= nil and not deepEqual(value, self._literal) then\
+		return false, string.format(\"expected literal %s at %s\", tostring(self._literal), path)\
+	end\
+\
+	if self._enum then\
+		local found = false\
+		for _, candidate in self._enum :: {any} do\
+			if deepEqual(value, candidate) then\
+				found = true\
+				break\
+			end\
+		end\
+		if not found then\
+			return false, string.format(\"value not in enum at %s\", path)\
+		end\
+	end\
+\
+	if typeof(value) == \"number\" then\
+		if self._min and value < self._min then\
+			return false, string.format(\"expected >= %s at %s\", tostring(self._min), path)\
+		end\
+		if self._max and value > self._max then\
+			return false, string.format(\"expected <= %s at %s\", tostring(self._max), path)\
+		end\
+		if self._step and (value % self._step) ~= 0 then\
+			return false, string.format(\"expected multiple of %s at %s\", tostring(self._step), path)\
+		end\
+	end\
+\
+	if typeof(value) == \"string\" then\
+		if self._minLength and #value < self._minLength then\
+			return false, string.format(\"expected length >= %d at %s\", self._minLength, path)\
+		end\
+		if self._maxLength and #value > self._maxLength then\
+			return false, string.format(\"expected length <= %d at %s\", self._maxLength, path)\
+		end\
+		if self._pattern and not string.match(value, self._pattern) then\
+			return false, string.format(\"expected to match pattern '%s' at %s\", self._pattern, path)\
+		end\
+	end\
+\
+	if typeof(value) == \"table\" then\
+		if self._minSize and tableSize(value) < self._minSize then\
+			return false, string.format(\"expected size >= %d at %s\", self._minSize, path)\
+		end\
+		if self._maxSize and tableSize(value) > self._maxSize then\
+			return false, string.format(\"expected size <= %d at %s\", self._maxSize, path)\
+		end\
+	end\
+\
+	if self._wheres then\
+		for _, predicate in self._wheres :: {Predicate} do\
+			if not predicate(value) then\
+				return false, string.format(\"failed custom predicate at %s\", path)\
+			end\
+		end\
+	end\
+\
+	return true\
+end\
+\
+function TypeDef:Check(value: any): boolean\
+	local ok = self:Validate(value)\
+	return ok\
+end\
+\
+function TypeDef:also(other: TypeDef): TypeDef\
+	self._intersects = self._intersects or {}\
+	table.insert(self._intersects, other)\
+	return self\
+end\
+\
+-- \"or\" and \"not\" are reserved words in Luau and cannot follow `:` in a method\
+-- call, so the union/negation modifiers are capitalized: `:Or()` / `:Not()`.\
+function TypeDef:Or(other: TypeDef): TypeDef\
+	self._unions = self._unions or {}\
+	table.insert(self._unions, other)\
+	return self\
+end\
+\
+function TypeDef:Not(other: TypeDef): TypeDef\
+	self._nots = self._nots or {}\
+	table.insert(self._nots, other)\
+	return self\
+end\
+\
+function TypeDef:nullable(): TypeDef\
+	self._nullable = true\
+	return self\
+end\
+\
+function TypeDef:default(value: any): TypeDef\
+	self._default = value\
+	return self\
+end\
+\
+function TypeDef:where(predicate: Predicate): TypeDef\
+	self._wheres = self._wheres or {}\
+	table.insert(self._wheres, predicate)\
+	return self\
+end\
+\
+function TypeDef:literal(value: any): TypeDef\
+	self._literal = value\
+	return self\
+end\
+\
+function TypeDef:enum(values: {any}): TypeDef\
+	self._enum = values\
+	return self\
+end\
+\
+function TypeDef:min(n: number): TypeDef\
+	self._min = n\
+	return self\
+end\
+\
+function TypeDef:max(n: number): TypeDef\
+	self._max = n\
+	return self\
+end\
+\
+function TypeDef:bet(minValue: number, maxValue: number): TypeDef\
+	self._min = minValue\
+	self._max = maxValue\
+	return self\
+end\
+\
+function TypeDef:step(n: number): TypeDef\
+	self._step = n\
+	return self\
+end\
+\
+function TypeDef:minLength(n: number): TypeDef\
+	self._minLength = n\
+	return self\
+end\
+\
+function TypeDef:maxLength(n: number): TypeDef\
+	self._maxLength = n\
+	return self\
+end\
+\
+function TypeDef:pattern(p: string): TypeDef\
+	self._pattern = p\
+	return self\
+end\
+\
+function TypeDef:minSize(n: number): TypeDef\
+	self._minSize = n\
+	return self\
+end\
+\
+function TypeDef:maxSize(n: number): TypeDef\
+	self._maxSize = n\
+	return self\
+end\
+\
+function TypeDef:tag(name: string): TypeDef\
+	self._tag = name\
+	return self\
+end\
+\
+function TypeDef:describe(text: string): TypeDef\
+	self._describe = text\
+	return self\
+end\
+\
+return TypeDef\
+"},
+{"Repl/_Packages/Substance/Particle/Types","ModuleScript","-- Substance\
+-- Particle/Types.lua\
+-- Plinko Labs\
+\
+export type EventType = \"Lazy\" | \"Strict\" | \"Solve\"\
+export type Authority = \"Server\" | \"Client\"\
+\
+export type Shape = {[string]: any}\
+export type Constraints = {[string]: (any) -> boolean}\
+\
+export type Subscription = {\
+	Cancel: (self: Subscription) -> (),\
+}\
+\
+export type AtomHandle = {\
+	Name: string,\
+	Shape: Shape?,\
+	Isotope: (self: AtomHandle, constraints: Constraints) -> AtomHandle,\
+	Compose: (self: AtomHandle, channelName: string, eventType: EventType) -> AtomHandle,\
+	Post: (self: AtomHandle, payload: any, target: Player?) -> any,\
+	Subscribe: (self: AtomHandle, handler: (any, Player?) -> any) -> Subscription,\
+	Entangle: (self: AtomHandle, owner: Authority) -> AtomHandle,\
+	Set: (self: AtomHandle, value: any) -> (),\
+	Get: (self: AtomHandle) -> any,\
+}\
+\
+export type MoleculeHandle = {\
+	Name: string,\
+}\
+\
+export type Channel = {\
+	Name: string,\
+	Shape: Shape?,\
+	Constraints: Constraints?,\
+	EventType: EventType?,\
+	Subscribers: {(any, Player?) -> any},\
+	IsMolecule: boolean,\
+	AtomNames: {string}?,\
+}\
+\
+return {}\
+"},
+{"Repl/_Packages/Substance/React","ModuleScript","-- Substance\
+-- React/init.lua\
+-- Plinko Labs\
+\
+local RiverModule = require(script.River)\
+local EntangleModule = require(script.Entangle)\
+local FluxModule = require(script.Flux)\
+\
+local React = {}\
+\
+function React.River(name: string): RiverModule.River\
+	return RiverModule.Get(name)\
+end\
+\
+function React.Entangle(atom: any, owner: string): any\
+	return EntangleModule.Bind(atom, owner)\
+end\
+\
+function React.Flux(name: string, schema: {[string]: any}?, authority: string?): FluxModule.FluxInstance\
+	return FluxModule.GetOrCreate(name, schema, authority)\
+end\
+\
+return React\
+"},
+{"Repl/_Packages/Substance/React/Entangle","ModuleScript","-- Substance\
+-- React/Entangle.lua\
+-- Plinko Labs\
+\
+local Players = game:GetService(\"Players\")\
+local RunService = game:GetService(\"RunService\")\
+\
+local Remotes = require(script.Parent.Parent.Particle.Remotes)\
+\
+local IS_SERVER = RunService:IsServer()\
+\
+local Entangle = {}\
+\
+local bound: {[string]: boolean} = {}\
+\
+function Entangle.Bind(atom: any, owner: string): any\
+	local name = atom._channel or atom.Name\
+	local channelName = \"Entangle::\" .. name\
+\
+	if bound[name] then\
+		return atom\
+	end\
+	bound[name] = true\
+\
+	local instance = Remotes.Get(channelName, \"Strict\") :: RemoteEvent\
+	local state = { Value = nil :: any }\
+\
+	local isOwnerSide = (owner == \"Server\" and IS_SERVER) or (owner == \"Client\" and not IS_SERVER)\
+\
+	if isOwnerSide and IS_SERVER then\
+		Players.PlayerAdded:Connect(function(player: Player)\
+			if state.Value == nil then\
+				return\
+			end\
+			instance:FireClient(player, state.Value)\
+		end)\
+	elseif not isOwnerSide then\
+		if IS_SERVER then\
+			instance.OnServerEvent:Connect(function(_player: Player, value: any)\
+				state.Value = value\
+			end)\
+		else\
+			instance.OnClientEvent:Connect(function(value: any)\
+				state.Value = value\
+			end)\
+		end\
+	end\
+\
+	atom.Set = function(_self: any, value: any)\
+		if not isOwnerSide then\
+			return\
+		end\
+\
+		state.Value = value\
+\
+		if IS_SERVER then\
+			for _, player in Players:GetPlayers() do\
+				instance:FireClient(player, value)\
+			end\
+		else\
+			instance:FireServer(value)\
+		end\
+	end\
+\
+	atom.Get = function(_self: any): any\
+		return state.Value\
+	end\
+\
+	return atom\
+end\
+\
+return Entangle\
+"},
+{"Repl/_Packages/Substance/React/Flux","ModuleScript","-- Substance\
+-- React/Flux.lua\
+-- Plinko Labs\
+\
+local Players = game:GetService(\"Players\")\
+local RunService = game:GetService(\"RunService\")\
+\
+local Remotes = require(script.Parent.Parent.Particle.Remotes)\
+\
+local IS_SERVER = RunService:IsServer()\
+\
+export type FluxInstance = {\
+	Name: string,\
+	Patch: (self: FluxInstance, partial: {[string]: any}) -> (),\
+	Get: (self: FluxInstance) -> {[string]: any},\
+	Subscribe: (self: FluxInstance, handler: ({[string]: any}) -> ()) -> {Cancel: () -> ()},\
+}\
+\
+local Flux = {}\
+Flux.__index = Flux\
+\
+local instances: {[string]: FluxInstance} = {}\
+\
+local function merge(target: {[string]: any}, partial: {[string]: any})\
+	for key, value in partial do\
+		target[key] = value\
+	end\
+end\
+\
+function Flux.GetOrCreate(name: string, _schema: {[string]: any}?, authority: string?): FluxInstance\
+	local existing = instances[name]\
+	if existing then\
+		return existing\
+	end\
+\
+	local self = setmetatable({}, Flux)\
+	self.Name = name\
+	self._state = {}\
+	self._handlers = {}\
+	self._isAuthority = (authority == \"Server\" and IS_SERVER) or (authority == \"Client\" and not IS_SERVER)\
+	self._instance = Remotes.Get(\"Flux::\" .. name, \"Strict\") :: RemoteEvent\
+\
+	if self._isAuthority then\
+		if IS_SERVER then\
+			Players.PlayerAdded:Connect(function(player: Player)\
+				self._instance:FireClient(player, self._state)\
+			end)\
+		end\
+	else\
+		local signal = if IS_SERVER then self._instance.OnServerEvent else self._instance.OnClientEvent\
+		signal:Connect(function(playerOrPatch: any, maybePatch: any)\
+			local patch = if IS_SERVER then maybePatch else playerOrPatch\
+			merge(self._state, patch)\
+			for _, handler in self._handlers do\
+				handler(self._state)\
+			end\
+		end)\
+	end\
+\
+	instances[name] = (self :: any) :: FluxInstance\
+	return (self :: any) :: FluxInstance\
+end\
+\
+function Flux:Patch(partial: {[string]: any})\
+	local self = self :: any\
+	if not self._isAuthority then\
+		return\
+	end\
+\
+	merge(self._state, partial)\
+\
+	if IS_SERVER then\
+		for _, player in Players:GetPlayers() do\
+			self._instance:FireClient(player, partial)\
+		end\
+	else\
+		self._instance:FireServer(partial)\
+	end\
+\
+	for _, handler in self._handlers do\
+		handler(self._state)\
+	end\
+end\
+\
+function Flux:Get(): {[string]: any}\
+	return (self :: any)._state\
+end\
+\
+function Flux:Subscribe(handler: ({[string]: any}) -> ()): {Cancel: () -> ()}\
+	local self = self :: any\
+	table.insert(self._handlers, handler)\
+\
+	return {\
+		Cancel = function()\
+			local index = table.find(self._handlers, handler)\
+			if not index then\
+				return\
+			end\
+			table.remove(self._handlers, index)\
+		end,\
+	}\
+end\
+\
+return Flux\
+"},
+{"Repl/_Packages/Substance/React/River","ModuleScript","-- Substance\
+-- React/River.lua\
+-- Plinko Labs\
+\
+local RunService = game:GetService(\"RunService\")\
+\
+local Remotes = require(script.Parent.Parent.Particle.Remotes)\
+\
+local IS_SERVER = RunService:IsServer()\
+\
+export type River = {\
+	Name: string,\
+	Push: (self: River, player: Player, payload: any) -> (),\
+	Next: (self: River, handler: (any) -> ()) -> River,\
+	Cancel: (self: River) -> (),\
+}\
+\
+local River = {}\
+River.__index = River\
+\
+local rivers: {[string]: River} = {}\
+\
+function River.Get(name: string): River\
+	local existing = rivers[name]\
+	if existing then\
+		return existing\
+	end\
+\
+	local self = setmetatable({}, River)\
+	self.Name = name\
+	self._instance = Remotes.Get(name, \"Strict\")\
+	self._handlers = {}\
+\
+	if not IS_SERVER then\
+		(self._instance :: RemoteEvent).OnClientEvent:Connect(function(payload: any)\
+			for _, handler in self._handlers do\
+				handler(payload)\
+			end\
+		end)\
+	end\
+\
+	rivers[name] = (self :: any) :: River\
+	return (self :: any) :: River\
+end\
+\
+function River:Push(player: Player, payload: any)\
+	if not IS_SERVER then\
+		return\
+	end\
+	(self :: any)._instance:FireClient(player, payload)\
+end\
+\
+function River:Next(handler: (any) -> ()): River\
+	table.insert((self :: any)._handlers, handler)\
+	return self\
+end\
+\
+function River:Cancel()\
+	table.clear((self :: any)._handlers)\
+end\
+\
+return River\
+"},
+{"Repl/_Packages/Substance/Tools","ModuleScript","-- Substance\
+-- Tools/init.lua\
+-- Plinko Labs\
+\
+local HooksModule = require(script.Hooks)\
+local FossilModule = require(script.Fossil)\
+local LandLineModule = require(script.LandLine)\
+local BatchModule = require(script.Batch)\
+local FissionModule = require(script.Fission)\
+\
+local Tools = {}\
+\
+Tools.Hooks = HooksModule\
+Tools.Fossil = FossilModule\
+\
+function Tools.LandLine(name: string, steps: {LandLineModule.Step}): any\
+	return LandLineModule.Run(name, steps)\
+end\
+\
+function Tools.Batch(requests: {BatchModule.Request}): any\
+	return BatchModule.Run(requests)\
+end\
+\
+function Tools.Fission(trigger: string, targets: {FissionModule.Target})\
+	FissionModule.Register(trigger, targets)\
+end\
+\
+return Tools\
+"},
+{"Repl/_Packages/Substance/Tools/Batch","ModuleScript","-- Substance\
+-- Tools/Batch.lua\
+-- Plinko Labs\
+\
+local Dispatch = require(script.Parent.Parent.Particle.Dispatch)\
+local Async = require(script.Parent.Parent.Async)\
+\
+export type Request = {\
+	Name: string,\
+	Payload: any?,\
+	Target: Player?,\
+}\
+\
+local Batch = {}\
+\
+function Batch.Run(requests: {Request}): any\
+	return Async.Reaction.new(function()\
+		local reactions = table.create(#requests)\
+		for index, request in requests do\
+			reactions[index] = Dispatch.Post(request.Name, request.Payload, request.Target)\
+		end\
+\
+		local results = table.create(#requests)\
+		for index, reaction in reactions do\
+			results[index] = reaction:Await()\
+		end\
+\
+		return results\
+	end)\
+end\
+\
+return Batch\
+"},
+{"Repl/_Packages/Substance/Tools/Fission","ModuleScript","-- Substance\
+-- Tools/Fission.lua\
+-- Plinko Labs\
+\
+local Dispatch = require(script.Parent.Parent.Particle.Dispatch)\
+\
+export type Target = string | {\
+	Name: string,\
+	Map: ((any) -> any)?,\
+}\
+\
+local Fission = {}\
+\
+function Fission.Register(trigger: string, targets: {Target})\
+	Dispatch.Subscribe(trigger, function(payload: any, player: Player?)\
+		for _, target in targets do\
+			local targetName = target\
+			local map = nil\
+\
+			if type(target) == \"table\" then\
+				targetName, map = target.Name, target.Map\
+			end\
+\
+			local outgoing = if map then map(payload) else payload\
+			Dispatch.Post(targetName :: string, outgoing, player)\
+		end\
+	end)\
+end\
+\
+return Fission\
+"},
+{"Repl/_Packages/Substance/Tools/Fossil","ModuleScript","-- Substance\
+-- Tools/Fossil.lua\
+-- Plinko Labs\
+\
+local ParticleFossil = require(script.Parent.Parent.Particle.Fossil)\
+\
+return {\
+	Start = ParticleFossil.Start,\
+	Stop = ParticleFossil.Stop,\
+	Replay = ParticleFossil.Replay,\
+	Export = ParticleFossil.Export,\
+	Clear = ParticleFossil.Clear,\
+}\
+"},
+{"Repl/_Packages/Substance/Tools/Hooks","ModuleScript","-- Substance\
+-- Tools/Hooks.lua\
+-- Plinko Labs\
+\
+local ParticleHooks = require(script.Parent.Parent.Particle.Hooks)\
+\
+return {\
+	Pre = ParticleHooks.Pre,\
+	Hook = ParticleHooks.Hook,\
+}\
+"},
+{"Repl/_Packages/Substance/Tools/LandLine","ModuleScript","-- Substance\
+-- Tools/LandLine.lua\
+-- Plinko Labs\
+\
+local Dispatch = require(script.Parent.Parent.Particle.Dispatch)\
+local Async = require(script.Parent.Parent.Async)\
+\
+export type Step = string | {\
+	Name: string,\
+	Payload: any?,\
+	Map: ((any) -> any)?,\
+}\
+\
+local LandLine = {}\
+\
+local function normalize(step: Step): (string, any?, ((any) -> any)?)\
+	if type(step) == \"string\" then\
+		return step, nil, nil\
+	end\
+	return step.Name, step.Payload, step.Map\
+end\
+\
+function LandLine.Run(_name: string, steps: {Step}): any\
+	return Async.Reaction.new(function()\
+		local result = nil\
+\
+		for index, step in steps do\
+			local channelName, payload, map = normalize(step)\
+\
+			local input = payload\
+			if input == nil and map then\
+				input = map(result)\
+			elseif input == nil and index > 1 then\
+				input = result\
+			end\
+\
+			result = Dispatch.Post(channelName, input):Await()\
+		end\
+\
+		return result\
+	end)\
+end\
+\
+return LandLine\
+"},
 {"Repl/_Patterns","ModuleScript","--- The pattern types Repl passes around: [[Result]] (a command outcome with an\
 --- exit code) and [[Option]] (a maybe-value). `Stream` (incremental output) lands\
 --- here alongside them once the Output model is in.\
