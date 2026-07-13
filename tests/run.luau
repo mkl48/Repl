@@ -12,6 +12,7 @@ local specs = {
 	{ name = "Argument", spec = require("./argument.spec") },
 	{ name = "Command", spec = require("./command.spec") },
 	{ name = "Registry", spec = require("./registry.spec") },
+	{ name = "Patterns", spec = require("./patterns.spec") },
 }
 
 local t = Harness.new()

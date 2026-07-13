@@ -19,9 +19,13 @@ local Repl = {}\
 --   _Utility (Shell/Fuzzy/Render) · _Commands (_Client/_Server/_Shared/_Types)\
 --   _Packages (vendored deps)\
 \
--- Available today: the shell front end, and the type engine.\
+-- Available today: the shell front end, the type engine, and the pattern types.\
 Repl.Shell = require(script._Utility.Shell)\
 Repl.Types = require(script._Main.Types)\
+\
+local Patterns = require(script._Patterns)\
+Repl.Result = Patterns.Result\
+Repl.Option = Patterns.Option\
 \
 return Repl\
 "},
@@ -963,7 +967,189 @@ end\
 return Expr\
 "},
 {"Repl/_Packages","Folder",nil},
-{"Repl/_Patterns","Folder",nil},
+{"Repl/_Patterns","ModuleScript","--- The pattern types Repl passes around: [[Result]] (a command outcome with an\
+--- exit code) and [[Option]] (a maybe-value). `Stream` (incremental output) lands\
+--- here alongside them once the Output model is in.\
+--- @section Patterns\
+--- @client\
+\
+local Patterns = {}\
+\
+Patterns.Result = require(script.Result)\
+Patterns.Option = require(script.Option)\
+\
+return Patterns\
+"},
+{"Repl/_Patterns/Option","ModuleScript","--- An **Option** — `some(value)` or `none()` — for the many places Repl has\
+--- \"maybe a value\": a resolved return, an optional argument, a looked-up command.\
+--- Keeps `nil`-juggling out of the call sites. Pairs with [[Result]].\
+--- @section Patterns\
+--- @client\
+\
+local Option = {}\
+Option.__index = Option\
+\
+export type Option = typeof(setmetatable({} :: { present: boolean, value: any }, Option))\
+\
+--- An option holding `value`.\
+function Option.some(value: any): Option\
+	return setmetatable({ present = true, value = value }, Option)\
+end\
+\
+--- The empty option.\
+function Option.none(): Option\
+	return setmetatable({ present = false }, Option)\
+end\
+\
+--- `some(value)` if `value ~= nil`, else `none()`.\
+function Option.of(value: any): Option\
+	if value == nil then\
+		return Option.none()\
+	end\
+	return Option.some(value)\
+end\
+\
+--- True if `value` is an Option.\
+function Option.is(value: any): boolean\
+	return type(value) == \"table\" and getmetatable(value) == Option\
+end\
+\
+function Option.isSome(self: Option): boolean\
+	return self.present\
+end\
+\
+function Option.isNone(self: Option): boolean\
+	return not self.present\
+end\
+\
+--- The value if present; raises otherwise.\
+function Option.unwrap(self: Option): any\
+	if self.present then\
+		return self.value\
+	end\
+	error(\"unwrap on a none Option\", 2)\
+end\
+\
+--- The value if present, else `default`.\
+function Option.unwrapOr(self: Option, default: any): any\
+	if self.present then\
+		return self.value\
+	end\
+	return default\
+end\
+\
+--- Maps the value if present; a none passes through.\
+function Option.map(self: Option, fn: (any) -> any): Option\
+	if self.present then\
+		return Option.of(fn(self.value))\
+	end\
+	return self\
+end\
+\
+--- Chains an Option-returning fn if present; a none short-circuits.\
+function Option.andThen(self: Option, fn: (any) -> Option): Option\
+	if self.present then\
+		return fn(self.value)\
+	end\
+	return self\
+end\
+\
+--- Branches: `arms.some(value)` or `arms.none()`.\
+function Option.match(self: Option, arms: { some: (any) -> any, none: () -> any }): any\
+	if self.present then\
+		return arms.some(self.value)\
+	end\
+	return arms.none()\
+end\
+\
+return Option\
+"},
+{"Repl/_Patterns/Result","ModuleScript","--- A **Result** — the typed outcome a command handler returns. `ok` carries a\
+--- value, `err` a message, and `abort` a cancellation; each has an exit `code`\
+--- (0 / 1 / 130) so the shell can branch chains (`a && b`, `a || b`) on real\
+--- outcomes rather than guessing from a return value. Pairs with [[Option]] and\
+--- backs `ctx:ok` / `ctx:err` / `ctx:abort`.\
+--- @section Patterns\
+--- @client\
+\
+local Result = {}\
+Result.__index = Result\
+\
+export type Result = typeof(setmetatable(\
+	{} :: { ok: boolean, value: any, error: string?, code: number, aborted: boolean? },\
+	Result\
+))\
+\
+--- A success carrying `value` (exit code 0).\
+function Result.ok(value: any): Result\
+	return setmetatable({ ok = true, value = value, code = 0 }, Result)\
+end\
+\
+--- A failure carrying `message` (exit code defaults to 1).\
+function Result.err(message: string, code: number?): Result\
+	return setmetatable({ ok = false, error = message, code = code or 1 }, Result)\
+end\
+\
+--- A cancellation (exit code 130, mirroring SIGINT) — distinct from an error.\
+function Result.abort(reason: string?): Result\
+	return setmetatable({ ok = false, error = reason or \"aborted\", code = 130, aborted = true }, Result)\
+end\
+\
+--- True if `value` is a Result.\
+function Result.is(value: any): boolean\
+	return type(value) == \"table\" and getmetatable(value) == Result\
+end\
+\
+function Result.isOk(self: Result): boolean\
+	return self.ok\
+end\
+\
+function Result.isErr(self: Result): boolean\
+	return not self.ok\
+end\
+\
+--- The value on ok; raises the error message on err.\
+function Result.unwrap(self: Result): any\
+	if self.ok then\
+		return self.value\
+	end\
+	error(self.error or \"unwrap on an err Result\", 2)\
+end\
+\
+--- The value on ok, else `default`.\
+function Result.unwrapOr(self: Result, default: any): any\
+	if self.ok then\
+		return self.value\
+	end\
+	return default\
+end\
+\
+--- Maps the value on ok, passing err/abort through untouched.\
+function Result.map(self: Result, fn: (any) -> any): Result\
+	if self.ok then\
+		return Result.ok(fn(self.value))\
+	end\
+	return self\
+end\
+\
+--- Chains a Result-returning fn on ok; short-circuits on err/abort.\
+function Result.andThen(self: Result, fn: (any) -> Result): Result\
+	if self.ok then\
+		return fn(self.value)\
+	end\
+	return self\
+end\
+\
+--- Branches: `arms.ok(value)` or `arms.err(message, code)`.\
+function Result.match(self: Result, arms: { ok: (any) -> any, err: (string?, number) -> any }): any\
+	if self.ok then\
+		return arms.ok(self.value)\
+	end\
+	return arms.err(self.error, self.code)\
+end\
+\
+return Result\
+"},
 {"Repl/_Utility","Folder",nil},
 {"Repl/_Utility/Shell","ModuleScript","--- The shell front end: source → tokens → AST. Re-exports the stages\
 --- ([[Lexer]], [[Parser]], [[Ast]], [[Token]]) and the two entry points.\
