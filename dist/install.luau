@@ -119,16 +119,19 @@ function Repl:Start(config: any?)\
 		end\
 		return b\
 	end\
+	local directory = pick(t.Directory, config.directory) or workspace.Name\
 	local Bar = require(script._Main.Client.Bar)\
 	bar = Bar.new({\
 		registry = Repl.Registry,\
-		prompt = pick(t.Prompt, config.prompt) or `{workspace.Name}/kr3ative/repl`,\
+		prompt = pick(t.Prompt, config.prompt) or `{directory}/kr3ative/repl`,\
 		activationKeys = pick(t.ActivationKeys, config.activationKeys) or pendingActivationKeys,\
-		cursorStyle = pick(t.CursorStyle, config.cursorStyle),\
 		compact = pick(t.Compact, config.compact),\
 		width = pick(t.Width, config.width),\
 		align = pick(t.Align, config.align),\
 		intellisense = pick(t.Intellisense, config.intellisense),\
+		square = pick(t.Square, config.square),\
+		scale = pick(t.Scale, config.scale),\
+		transparency = pick(t.Transparency, config.transparency),\
 		parent = pick(t.Parent, config.parent),\
 		submit = function(text)\
 			dispatcher:run(text, {\
@@ -803,7 +806,6 @@ local Players = game:GetService(\"Players\")\
 local UserInputService = game:GetService(\"UserInputService\")\
 local ContextActionService = game:GetService(\"ContextActionService\")\
 local StarterGui = game:GetService(\"StarterGui\")\
-local TextService = game:GetService(\"TextService\")\
 \
 local Fusion = require(script.Parent.Parent.Parent._Packages.Fusion)\
 local Theming = require(script.Parent.Parent.Parent._Utility.Render.Theming)\
@@ -828,24 +830,20 @@ export type Config = {\
 	prompt: string?, -- the prompt path, e.g. \"Arena/kr3ative/repl\"\
 	parent: Instance?, -- defaults to a fresh ScreenGui in PlayerGui\
 	activationKeys: { Enum.KeyCode }?, -- default { Backquote }\
-	cursorStyle: (\"block\" | \"line\" | \"underline\")?, -- default \"block\"\
 	compact: boolean?, -- single-bar (Cmdr-like) layout instead of the full panel\
 	width: number?, -- compact bar width in px (default 720)\
 	align: (\"Top\" | \"Bottom\" | \"Center\")?, -- where the bar sits (default Bottom)\
 	intellisense: boolean?, -- show the signature hint line (default true)\
+	square: boolean?, -- no rounded corners anywhere\
+	scale: number?, -- UIScale over the whole terminal (default 1)\
+	transparency: number?, -- command-line background transparency 0..1 (default 0)\
+	directory: string?, -- the prompt root, e.g. \"MyGame\" (default = workspace name)\
 }\
 \
 local FONT = Enum.Font.Code\
 local TEXT_SIZE = 16\
 local ROW_HEIGHT = 30\
 local COMPLETION_HEIGHT = 24\
-local BLINK_PERIOD = 0.53\
-\
--- width of one monospace character in the terminal font (computed once)\
-local function charWidth(): number\
-	local size = TextService:GetTextSize(\"M\", TEXT_SIZE, FONT, Vector2.new(1e6, 1e6))\
-	return size.X\
-end\
 \
 --- Creates and mounts the bar. Returns a bar handle.\
 function Bar.new(config: Config)\
@@ -859,11 +857,14 @@ function Bar.new(config: Config)\
 	self._connections = {} :: { RBXScriptConnection }\
 	self._prompt = config.prompt or \"kr3ative/repl\"\
 	self._activationKeys = config.activationKeys or { Enum.KeyCode.Backquote }\
-	self._cursorStyle = config.cursorStyle or \"block\"\
 	self._compact = config.compact == true\
 	self._width = config.width or 720\
 	self._align = config.align or \"Bottom\"\
 	self._intellisense = config.intellisense ~= false -- default true\
+	self._square = config.square == true\
+	self._transparency = config.transparency or 0\
+	self._corner = if config.square then 0 else 6 -- corner radius used everywhere\
+	self._scale = config.scale or 1\
 	self._suppressed = false\
 \
 	-- ── dev-facing state + events ────────────────────────────────────────────\
@@ -877,8 +878,6 @@ function Bar.new(config: Config)\
 	local focused = scope:Value(false)\
 	local selected = scope:Value(1) -- 1-based index into the completion list\
 	local dismissed = scope:Value(false) -- Ctrl hides the popover until the next edit\
-	local cursorPos = scope:Value(1)\
-	local cursorOn = scope:Value(true) -- blink state\
 	self._input, self._visible, self._focused = input, visible, focused\
 	self._selected, self._dismissed = selected, dismissed\
 \
@@ -999,7 +998,7 @@ function Bar.new(config: Config)\
 			Visible = false, -- shown once something is printed\
 			LayoutOrder = 1,\
 			[Children] = {\
-				scope:New \"UICorner\" { CornerRadius = UDim.new(0, 6) },\
+				scope:New \"UICorner\" { CornerRadius = UDim.new(0, self._corner) },\
 				scope:New \"UISizeConstraint\" { MaxSize = Vector2.new(math.huge, 240) },\
 				scope:New \"UIPadding\" {\
 					PaddingTop = UDim.new(0, 6),\
@@ -1051,7 +1050,7 @@ function Bar.new(config: Config)\
 		LayoutOrder = 2,\
 		Visible = popoverOpen,\
 		[Children] = {\
-			scope:New \"UICorner\" { CornerRadius = UDim.new(0, if self._compact then 6 else 0) },\
+			scope:New \"UICorner\" { CornerRadius = UDim.new(0, if self._compact then self._corner else 0) },\
 			scope:New \"UIStroke\" { Color = Theming.color(scope, \"border\"), Thickness = 1 },\
 			scope:New \"UIListLayout\" {\
 				FillDirection = Enum.FillDirection.Vertical,\
@@ -1137,36 +1136,6 @@ function Bar.new(config: Config)\
 		end),\
 	}\
 \
-	-- custom terminal cursor (block by default), positioned at the caret\
-	local cw = charWidth()\
-	local cursor = scope:New \"Frame\" {\
-		Name = \"Cursor\",\
-		BorderSizePixel = 0,\
-		BackgroundColor3 = Theming.color(scope, \"cursor\"),\
-		BackgroundTransparency = scope:Computed(function(use)\
-			return if use(focused) and use(cursorOn) then 0.35 else 1\
-		end),\
-		ZIndex = 3,\
-		AnchorPoint = Vector2.new(0, 0.5),\
-		Position = scope:Computed(function(use)\
-			return UDim2.new(0, (use(cursorPos) - 1) * cw, 0.5, 0)\
-		end),\
-		Size = (function()\
-			if self._cursorStyle == \"line\" then\
-				return UDim2.new(0, 2, 0, TEXT_SIZE + 2)\
-			elseif self._cursorStyle == \"underline\" then\
-				return UDim2.new(0, cw, 0, 2)\
-			end\
-			return UDim2.new(0, cw, 0, TEXT_SIZE + 2) -- block\
-		end)(),\
-	}\
-	if self._cursorStyle == \"underline\" then\
-		cursor.AnchorPoint = Vector2.new(0, 1)\
-		cursor.Position = scope:Computed(function(use)\
-			return UDim2.new(0, (use(cursorPos) - 1) * cw, 1, -2)\
-		end)\
-	end\
-\
 	-- signature intellisense, right-aligned in the field (e.g. `theme <name>`)\
 	local hintLabel = scope:New \"TextLabel\" {\
 		Name = \"Hint\",\
@@ -1226,12 +1195,6 @@ function Bar.new(config: Config)\
 			input:set(newText)\
 			dismissed:set(false)\
 			selected:set(1)\
-			cursorPos:set((textBox and textBox.CursorPosition) or (#newText + 1))\
-		end,\
-		[OnChange \"CursorPosition\"] = function(pos)\
-			if pos and pos > 0 then\
-				cursorPos:set(pos)\
-			end\
 		end,\
 		[OnEvent \"Focused\"] = function()\
 			focused:set(true)\
@@ -1276,7 +1239,6 @@ function Bar.new(config: Config)\
 					scope:New \"UIFlexItem\" { FlexMode = Enum.UIFlexMode.Fill },\
 					ghostLabel,\
 					hintLabel,\
-					cursor,\
 					textBox,\
 				},\
 			},\
@@ -1290,11 +1252,11 @@ function Bar.new(config: Config)\
 		local bar = scope:New \"Frame\" {\
 			Name = \"Bar\",\
 			BackgroundColor3 = Theming.color(scope, \"bg\"),\
-			BackgroundTransparency = 0.05,\
+			BackgroundTransparency = self._transparency,\
 			BorderSizePixel = 0,\
 			Size = UDim2.new(1, 0, 0, ROW_HEIGHT + 14),\
 			[Children] = {\
-				scope:New \"UICorner\" { CornerRadius = UDim.new(0, 6) },\
+				scope:New \"UICorner\" { CornerRadius = UDim.new(0, self._corner) },\
 				scope:New \"UIStroke\" { Color = Theming.color(scope, \"border\"), Thickness = 1 },\
 				inputRow,\
 			},\
@@ -1354,6 +1316,7 @@ function Bar.new(config: Config)\
 		container = scope:New \"Frame\" {\
 			Name = \"ReplBar\",\
 			BackgroundColor3 = Theming.color(scope, \"bg\"),\
+			BackgroundTransparency = self._transparency,\
 			BorderSizePixel = 0,\
 			Size = UDim2.new(1, 0, 0.4, 0),\
 			AnchorPoint = anchor,\
@@ -1373,6 +1336,11 @@ function Bar.new(config: Config)\
 		}\
 	end\
 \
+	-- scale the whole terminal\
+	if self._scale ~= 1 then\
+		scope:New \"UIScale\" { Scale = self._scale, Parent = container }\
+	end\
+\
 	self._gui = scope:New \"ScreenGui\" {\
 		Name = \"Repl\",\
 		ResetOnSpawn = false,\
@@ -1382,14 +1350,6 @@ function Bar.new(config: Config)\
 		Parent = config.parent or (Players.LocalPlayer and Players.LocalPlayer:WaitForChild(\"PlayerGui\")),\
 		[Children] = { container },\
 	}\
-\
-	-- blink the cursor\
-	self._blink = task.spawn(function()\
-		while true do\
-			task.wait(BLINK_PERIOD)\
-			cursorOn:set(not peek(cursorOn))\
-		end\
-	end)\
 \
 	-- ── activation key (sunk via CAS so ` doesn't also open the backpack) ─────\
 	self:setActivationKeys(self._activationKeys)\
@@ -1475,18 +1435,19 @@ function Bar:_suppressGameInput(on: boolean)\
 	end\
 end\
 \
---- (Re)binds the activation key(s), sinking them so they don't leak to core UI.\
+--- (Re)binds the activation key(s), sinking them at a high priority so they win\
+--- over core hotkeys (e.g. ` no longer also toggles the backpack).\
 function Bar:setActivationKeys(keys: { Enum.KeyCode })\
 	self._activationKeys = keys\
 	pcall(function()\
 		ContextActionService:UnbindAction(\"ReplToggle\")\
 	end)\
-	ContextActionService:BindAction(\"ReplToggle\", function(_, state)\
+	ContextActionService:BindActionAtPriority(\"ReplToggle\", function(_, state)\
 		if state == Enum.UserInputState.Begin then\
 			self:toggle()\
 		end\
 		return Enum.ContextActionResult.Sink\
-	end, false, table.unpack(keys))\
+	end, false, Enum.ContextActionPriority.High.Value + 100, table.unpack(keys))\
 end\
 \
 --- Appends a rendered [[Output]] node to the terminal.\
@@ -1549,9 +1510,6 @@ end\
 --- Tears down the bar and all its state, connections, and input overrides.\
 function Bar:destroy()\
 	self:_suppressGameInput(false)\
-	if self._blink then\
-		task.cancel(self._blink)\
-	end\
 	pcall(function()\
 		ContextActionService:UnbindAction(\"ReplToggle\")\
 	end)\

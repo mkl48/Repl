@@ -115,16 +115,19 @@ function Repl:Start(config: any?)
 		end
 		return b
 	end
+	local directory = pick(t.Directory, config.directory) or workspace.Name
 	local Bar = require(script._Main.Client.Bar)
 	bar = Bar.new({
 		registry = Repl.Registry,
-		prompt = pick(t.Prompt, config.prompt) or `{workspace.Name}/kr3ative/repl`,
+		prompt = pick(t.Prompt, config.prompt) or `{directory}/kr3ative/repl`,
 		activationKeys = pick(t.ActivationKeys, config.activationKeys) or pendingActivationKeys,
-		cursorStyle = pick(t.CursorStyle, config.cursorStyle),
 		compact = pick(t.Compact, config.compact),
 		width = pick(t.Width, config.width),
 		align = pick(t.Align, config.align),
 		intellisense = pick(t.Intellisense, config.intellisense),
+		square = pick(t.Square, config.square),
+		scale = pick(t.Scale, config.scale),
+		transparency = pick(t.Transparency, config.transparency),
 		parent = pick(t.Parent, config.parent),
 		submit = function(text)
 			dispatcher:run(text, {
