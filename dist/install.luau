@@ -50,10 +50,35 @@ Repl.Registry = Registry.new()\
 --- Capability-based auth (`Repl.Authority:DefineRole(...)`, `:Assign(...)`, …).\
 Repl.Authority = Authority.new()\
 \
+local Network = require(script._Main.Network)\
+local Output = require(script._Utility.Render.Output)\
+\
+-- run a Server/Shared command's source on the server, blocking for its rendered\
+-- output + exit code, and draw that output into the local terminal\
+local function clientRemote(sourceText: string, exec: any)\
+	local okCall, response = pcall(function()\
+		return Network.run(sourceText)\
+	end)\
+	if not okCall or type(response) ~= \"table\" then\
+		if exec.sink then\
+			exec.sink(Output.error(`server did not respond ({tostring(response)})`))\
+		end\
+		return Patterns.Result.err(\"server did not respond\")\
+	end\
+	if response.output and exec.sink then\
+		for _, node in response.output do\
+			exec.sink(node)\
+		end\
+	end\
+	if response.code == 0 then\
+		return Patterns.Result.ok(nil)\
+	end\
+	return Patterns.Result.err(response.error or \"error\", response.code)\
+end\
+\
 -- validate a command's capabilities before it runs. A command with no declared\
 -- capabilities is \"base level\" and always allowed; one with capabilities is\
--- checked against the executor's roles (Server/Shared authoritatively on the\
--- server once Network lands; Client-side for now).\
+-- checked against the executor's roles. On the server this runs authoritatively.\
 local dispatcher = Dispatcher.new(Repl.Registry, {\
 	authorize = function(command, exec)\
 		if #command.capabilities == 0 then\
@@ -65,7 +90,38 @@ local dispatcher = Dispatcher.new(Repl.Registry, {\
 		end\
 		return false, `missing capability: {table.concat(missing, \", \")}`\
 	end,\
+	-- route by realm: the server runs everything; the client runs Client commands\
+	-- locally, sends Server commands to the server, and runs Shared on both sides.\
+	-- an unknown command is sent to the server (it may know it).\
+	router = function(command, _exec)\
+		if RunService:IsServer() then\
+			return \"local\"\
+		end\
+		if command == nil or command.realm == \"Server\" then\
+			return \"remote\"\
+		end\
+		if command.realm == \"Shared\" then\
+			return \"both\"\
+		end\
+		return \"local\"\
+	end,\
+	remote = clientRemote,\
 })\
+\
+-- the server answers run requests authoritatively (re-parse, re-validate, run)\
+if RunService:IsServer() then\
+	Network.serve(function(line, player)\
+		local nodes = {}\
+		local result = dispatcher:run(line, {\
+			executor = player,\
+			realm = \"server\",\
+			sink = function(node)\
+				table.insert(nodes, node)\
+			end,\
+		})\
+		return { output = nodes, code = result.code, error = result.error }\
+	end)\
+end\
 \
 -- ── dev-facing state + events ────────────────────────────────────────────────\
 Repl.Focused = false\
@@ -1924,6 +1980,52 @@ end\
 \
 return History\
 "},
+{"Repl/_Main/Network","ModuleScript","--- The **network layer** — how a client hands a Server/Shared command to the\
+--- server. It's a single [[Substance]] `Solve` channel (a RemoteFunction), so a\
+--- `run` is an *awaited round-trip*: the client blocks until the server has\
+--- validated, executed, and returned the rendered output + exit code. The server\
+--- is authoritative — it re-parses and re-checks capabilities against the real\
+--- executor, never trusting the client.\
+---\
+--- Studio-only (pulls Substance). The realm-neutral queuing lives in [[EventBus]];\
+--- this is just the transport.\
+--- @section Server\
+--- @client\
+\
+local Substance = require(script.Parent.Parent.Parent._Packages.Substance)\
+\
+local Network = {}\
+\
+local CHANNEL = \"Repl.Run\"\
+local ready = false\
+\
+-- define + compose the Solve (RemoteFunction) channel once, on either realm\
+local function ensure()\
+	if ready then\
+		return\
+	end\
+	ready = true\
+	local atom = Substance.Define(\"ReplRunAtom\", { line = \"string\" })\
+	atom:Compose(CHANNEL, \"Solve\")\
+end\
+\
+--- Server: handle incoming runs. `handler(line, player)` returns the response\
+--- table (`{ output, code, error }`) sent back over the RemoteFunction.\
+function Network.serve(handler: (line: string, player: Player) -> any)\
+	ensure()\
+	Substance.Subscribe(CHANNEL, function(payload: any, player: Player?)\
+		return handler(payload.line, player :: Player)\
+	end)\
+end\
+\
+--- Client: run `line` on the server and block for the response.\
+function Network.run(line: string): any\
+	ensure()\
+	return Substance.Post(CHANNEL, { line = line }):Await()\
+end\
+\
+return Network\
+"},
 {"Repl/_Main/Server","Folder",nil},
 {"Repl/_Main/Server/Authority","ModuleScript","--- Capability-based **Authority**. Commands declare `Capabilities` (dotted\
 --- strings like `players.kill.others`), never a rank. **Roles** are named bundles\
@@ -2129,6 +2231,12 @@ export type ExecConfig = {\
 export type Config = {\
 	--- Optional gate run before a command; return `(false, reason)` to deny.\
 	authorize: ((command: any, exec: ExecConfig) -> (boolean, string?))?,\
+	--- Where to run a command: \"local\" (here), \"remote\" (the other realm), or\
+	--- \"both\" (Shared). `command` is nil if unknown locally. Defaults to \"local\".\
+	router: ((command: any?, exec: ExecConfig) -> string)?,\
+	--- Runs a command's source text on the other realm; returns a Result. Used\
+	--- when `router` says \"remote\"/\"both\".\
+	remote: ((sourceText: string, exec: ExecConfig) -> any)?,\
 }\
 \
 -- operator tokens that separate one command from the next\
@@ -2145,8 +2253,9 @@ function Dispatcher.new(registry: any, config: Config?)\
 	return setmetatable({ registry = registry, config = config or {} }, Dispatcher)\
 end\
 \
--- split the token stream into { op, tokens } segments on chain operators\
-local function segment(tokens)\
+-- split the token stream into { op, tokens, text } segments on chain operators.\
+-- `text` is the exact source substring (for handing a segment to the other realm).\
+local function segment(tokens, line: string)\
 	local segments = {}\
 	local current = { op = nil :: string?, tokens = {} }\
 	for _, token in tokens do\
@@ -2160,6 +2269,14 @@ local function segment(tokens)\
 		end\
 	end\
 	table.insert(segments, current)\
+	for _, seg in segments do\
+		if #seg.tokens > 0 then\
+			local first, last = seg.tokens[1], seg.tokens[#seg.tokens]\
+			seg.text = string.sub(line, first.pos, last.pos + #last.text - 1)\
+		else\
+			seg.text = \"\"\
+		end\
+	end\
 	return segments\
 end\
 \
@@ -2324,11 +2441,26 @@ function Dispatcher._runSegment(self, tokens, exec, returnPool): any\
 	return result\
 end\
 \
+-- run one segment, routing it local / remote / both per the config\
+function Dispatcher._dispatch(self, seg, exec, returnPool): any\
+	local head = seg.tokens[1]\
+	local command = if head.kind == Kind.Ident then self.registry:resolve(head.text) else nil\
+	local route = if self.config.router then self.config.router(command, exec) else \"local\"\
+\
+	if route == \"remote\" and self.config.remote then\
+		return self.config.remote(seg.text, exec)\
+	elseif route == \"both\" and self.config.remote then\
+		Dispatcher._runSegment(self, seg.tokens, exec, returnPool) -- this realm's side\
+		return self.config.remote(seg.text, exec) -- the authoritative other side\
+	end\
+	return Dispatcher._runSegment(self, seg.tokens, exec, returnPool)\
+end\
+\
 --- Runs a whole line (with chains). Returns the last executed [[Result]].\
 function Dispatcher:run(line: string, exec: ExecConfig?): any\
 	local execConfig = exec or {}\
 	local lex = Shell.tokenize(line)\
-	local segments = segment(lex.tokens)\
+	local segments = segment(lex.tokens, line)\
 	local returnPool = Shell.ReturnPool.new()\
 \
 	local last = Result.ok(nil)\
@@ -2349,7 +2481,7 @@ function Dispatcher:run(line: string, exec: ExecConfig?): any\
 		end\
 \
 		if shouldRun then\
-			last = Dispatcher._runSegment(self, seg.tokens, execConfig, returnPool)\
+			last = Dispatcher._dispatch(self, seg, execConfig, returnPool)\
 			ran = true\
 		end\
 	end\

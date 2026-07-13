@@ -31,6 +31,12 @@ export type ExecConfig = {
 export type Config = {
 	--- Optional gate run before a command; return `(false, reason)` to deny.
 	authorize: ((command: any, exec: ExecConfig) -> (boolean, string?))?,
+	--- Where to run a command: "local" (here), "remote" (the other realm), or
+	--- "both" (Shared). `command` is nil if unknown locally. Defaults to "local".
+	router: ((command: any?, exec: ExecConfig) -> string)?,
+	--- Runs a command's source text on the other realm; returns a Result. Used
+	--- when `router` says "remote"/"both".
+	remote: ((sourceText: string, exec: ExecConfig) -> any)?,
 }
 
 -- operator tokens that separate one command from the next
@@ -47,8 +53,9 @@ function Dispatcher.new(registry: any, config: Config?)
 	return setmetatable({ registry = registry, config = config or {} }, Dispatcher)
 end
 
--- split the token stream into { op, tokens } segments on chain operators
-local function segment(tokens)
+-- split the token stream into { op, tokens, text } segments on chain operators.
+-- `text` is the exact source substring (for handing a segment to the other realm).
+local function segment(tokens, line: string)
 	local segments = {}
 	local current = { op = nil :: string?, tokens = {} }
 	for _, token in tokens do
@@ -62,6 +69,14 @@ local function segment(tokens)
 		end
 	end
 	table.insert(segments, current)
+	for _, seg in segments do
+		if #seg.tokens > 0 then
+			local first, last = seg.tokens[1], seg.tokens[#seg.tokens]
+			seg.text = string.sub(line, first.pos, last.pos + #last.text - 1)
+		else
+			seg.text = ""
+		end
+	end
 	return segments
 end
 
@@ -226,11 +241,26 @@ function Dispatcher._runSegment(self, tokens, exec, returnPool): any
 	return result
 end
 
+-- run one segment, routing it local / remote / both per the config
+function Dispatcher._dispatch(self, seg, exec, returnPool): any
+	local head = seg.tokens[1]
+	local command = if head.kind == Kind.Ident then self.registry:resolve(head.text) else nil
+	local route = if self.config.router then self.config.router(command, exec) else "local"
+
+	if route == "remote" and self.config.remote then
+		return self.config.remote(seg.text, exec)
+	elseif route == "both" and self.config.remote then
+		Dispatcher._runSegment(self, seg.tokens, exec, returnPool) -- this realm's side
+		return self.config.remote(seg.text, exec) -- the authoritative other side
+	end
+	return Dispatcher._runSegment(self, seg.tokens, exec, returnPool)
+end
+
 --- Runs a whole line (with chains). Returns the last executed [[Result]].
 function Dispatcher:run(line: string, exec: ExecConfig?): any
 	local execConfig = exec or {}
 	local lex = Shell.tokenize(line)
-	local segments = segment(lex.tokens)
+	local segments = segment(lex.tokens, line)
 	local returnPool = Shell.ReturnPool.new()
 
 	local last = Result.ok(nil)
@@ -251,7 +281,7 @@ function Dispatcher:run(line: string, exec: ExecConfig?): any
 		end
 
 		if shouldRun then
-			last = Dispatcher._runSegment(self, seg.tokens, execConfig, returnPool)
+			last = Dispatcher._dispatch(self, seg, execConfig, returnPool)
 			ran = true
 		end
 	end

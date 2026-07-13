@@ -46,10 +46,35 @@ Repl.Registry = Registry.new()
 --- Capability-based auth (`Repl.Authority:DefineRole(...)`, `:Assign(...)`, …).
 Repl.Authority = Authority.new()
 
+local Network = require(script._Main.Network)
+local Output = require(script._Utility.Render.Output)
+
+-- run a Server/Shared command's source on the server, blocking for its rendered
+-- output + exit code, and draw that output into the local terminal
+local function clientRemote(sourceText: string, exec: any)
+	local okCall, response = pcall(function()
+		return Network.run(sourceText)
+	end)
+	if not okCall or type(response) ~= "table" then
+		if exec.sink then
+			exec.sink(Output.error(`server did not respond ({tostring(response)})`))
+		end
+		return Patterns.Result.err("server did not respond")
+	end
+	if response.output and exec.sink then
+		for _, node in response.output do
+			exec.sink(node)
+		end
+	end
+	if response.code == 0 then
+		return Patterns.Result.ok(nil)
+	end
+	return Patterns.Result.err(response.error or "error", response.code)
+end
+
 -- validate a command's capabilities before it runs. A command with no declared
 -- capabilities is "base level" and always allowed; one with capabilities is
--- checked against the executor's roles (Server/Shared authoritatively on the
--- server once Network lands; Client-side for now).
+-- checked against the executor's roles. On the server this runs authoritatively.
 local dispatcher = Dispatcher.new(Repl.Registry, {
 	authorize = function(command, exec)
 		if #command.capabilities == 0 then
@@ -61,7 +86,38 @@ local dispatcher = Dispatcher.new(Repl.Registry, {
 		end
 		return false, `missing capability: {table.concat(missing, ", ")}`
 	end,
+	-- route by realm: the server runs everything; the client runs Client commands
+	-- locally, sends Server commands to the server, and runs Shared on both sides.
+	-- an unknown command is sent to the server (it may know it).
+	router = function(command, _exec)
+		if RunService:IsServer() then
+			return "local"
+		end
+		if command == nil or command.realm == "Server" then
+			return "remote"
+		end
+		if command.realm == "Shared" then
+			return "both"
+		end
+		return "local"
+	end,
+	remote = clientRemote,
 })
+
+-- the server answers run requests authoritatively (re-parse, re-validate, run)
+if RunService:IsServer() then
+	Network.serve(function(line, player)
+		local nodes = {}
+		local result = dispatcher:run(line, {
+			executor = player,
+			realm = "server",
+			sink = function(node)
+				table.insert(nodes, node)
+			end,
+		})
+		return { output = nodes, code = result.code, error = result.error }
+	end)
+end
 
 -- ── dev-facing state + events ────────────────────────────────────────────────
 Repl.Focused = false

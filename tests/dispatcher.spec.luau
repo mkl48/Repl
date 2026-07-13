@@ -3,6 +3,7 @@
 local Loader = require("./loader")
 local Dispatcher = Loader.get("Dispatcher")
 local Registry = Loader.get("Registry")
+local Result = Loader.get("Result")
 
 local function eq(a, b, message)
 	if a ~= b then
@@ -151,6 +152,60 @@ return function(t)
 	test("a negative number is a value, not a flag", function()
 		local d = Dispatcher.new(buildRegistry())
 		eq(d:run("neg -5"):unwrap(), -5, "-5 binds as a number")
+	end)
+
+	test("router 'remote' delegates to the remote runner with exact source", function()
+		local sent
+		local d = Dispatcher.new(buildRegistry(), {
+			router = function()
+				return "remote"
+			end,
+			remote = function(text)
+				sent = text
+				return Result.ok("from server")
+			end,
+		})
+		local r = d:run("add 2 3")
+		eq(sent, "add 2 3", "the exact segment text was sent")
+		ok(r:isOk(), "the remote result is returned")
+	end)
+
+	test("each chain segment routes with its own exact text", function()
+		local texts = {}
+		local d = Dispatcher.new(buildRegistry(), {
+			router = function()
+				return "remote"
+			end,
+			remote = function(text)
+				table.insert(texts, text)
+				return Result.ok()
+			end,
+		})
+		d:run("add 2 3 && greet Ker")
+		eq(texts[1], "add 2 3", "first segment")
+		eq(texts[2], "greet Ker", "second segment, split at &&")
+	end)
+
+	test("router 'both' runs locally and remotely", function()
+		local reg = buildRegistry()
+		local ranLocal = false
+		reg:register({ Name = "sync", Run = function(ctx)
+			ranLocal = true
+			return ctx:ok()
+		end })
+		local sent
+		local d = Dispatcher.new(reg, {
+			router = function(command)
+				return if command and command.name == "sync" then "both" else "local"
+			end,
+			remote = function(text)
+				sent = text
+				return Result.ok()
+			end,
+		})
+		d:run("sync")
+		ok(ranLocal, "the local side ran")
+		eq(sent, "sync", "the remote side was invoked too")
 	end)
 
 	test("before/after hooks fire", function()
