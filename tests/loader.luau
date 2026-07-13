@@ -80,15 +80,19 @@ local function customRequire(handle)
 	return result
 end
 
--- depth-first search for a module handle by Name (names are unique in Repl)
+-- depth-first search for a module handle by Name (names are unique across Repl's
+-- own sources). Vendored deps under _Packages are skipped so their internal
+-- module names (e.g. Fusion's own Types) can't shadow Repl's.
 local function findByName(handle, name)
 	if rawget(handle, "Name") == name and rawget(handle, "file") then
 		return handle
 	end
-	for _, child in rawget(handle, "children") do
-		local found = findByName(child, name)
-		if found then
-			return found
+	for childName, child in rawget(handle, "children") do
+		if childName ~= "_Packages" then
+			local found = findByName(child, name)
+			if found then
+				return found
+			end
 		end
 	end
 	return nil

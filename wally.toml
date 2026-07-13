@@ -8,7 +8,10 @@ registry = "https://github.com/UpliftGames/wally-index"
 realm = "shared"
 
 [dependencies]
-# Switch (input) and Substance (networking) are vendored under src/ so Repl ships
-# with everything it needs. Uncomment for Wally-managed copies instead.
+# Switch (input), Substance (networking), and Fusion (UI) are vendored under
+# src/_Packages so Repl ships self-contained and the installer bundles everything.
+# Fusion is elttob/fusion 0.3.0 (v0.3-beta), scoped API. Uncomment for
+# Wally-managed copies instead.
 # Switch = "ker/switch@0.1.0"
 # Substance = "ker/substance@0.1.0"
+# Fusion = "elttob/fusion@0.3.0"
