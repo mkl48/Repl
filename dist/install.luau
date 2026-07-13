@@ -1190,57 +1190,35 @@ function Bar.new(config: Config)\
 	self._submitLine = submit\
 \
 	-- ── output area ──────────────────────────────────────────────────────────\
-	local outputFrame\
-	if self._compact then\
-		-- a compact log that grows upward above the bar, capped and clipped\
-		outputFrame = scope:New \"Frame\" {\
-			Name = \"Output\",\
-			BackgroundColor3 = Theming.color(scope, \"bg\"),\
-			BackgroundTransparency = 0.15,\
-			BorderSizePixel = 0,\
-			AutomaticSize = Enum.AutomaticSize.Y,\
-			Size = UDim2.new(1, 0, 0, 0),\
-			ClipsDescendants = true,\
-			Visible = false, -- shown once something is printed\
-			LayoutOrder = 1,\
-			[Children] = {\
-				scope:New \"UICorner\" { CornerRadius = UDim.new(0, self._corner) },\
-				scope:New \"UISizeConstraint\" { MaxSize = Vector2.new(math.huge, 240) },\
-				scope:New \"UIPadding\" {\
-					PaddingTop = UDim.new(0, 6),\
-					PaddingBottom = UDim.new(0, 6),\
-					PaddingLeft = UDim.new(0, 10),\
-					PaddingRight = UDim.new(0, 10),\
-				},\
-				scope:New \"UIListLayout\" {\
-					FillDirection = Enum.FillDirection.Vertical,\
-					SortOrder = Enum.SortOrder.LayoutOrder,\
-					VerticalAlignment = Enum.VerticalAlignment.Bottom,\
-					Padding = UDim.new(0, 2),\
-				},\
+	-- one content-fitting log for both modes: it sizes to its lines (capped +\
+	-- clipped) and hugs the input, so there's never a growing empty gap\
+	local outputFrame = scope:New \"Frame\" {\
+		Name = \"Output\",\
+		BackgroundColor3 = Theming.color(scope, \"bg\"),\
+		BackgroundTransparency = if self._compact then 0.15 else self._transparency,\
+		BorderSizePixel = 0,\
+		AutomaticSize = Enum.AutomaticSize.Y,\
+		Size = UDim2.new(1, 0, 0, 0),\
+		ClipsDescendants = true,\
+		Visible = false, -- shown once something is printed\
+		LayoutOrder = 1,\
+		[Children] = {\
+			scope:New \"UICorner\" { CornerRadius = UDim.new(0, if self._compact then self._corner else 0) },\
+			scope:New \"UISizeConstraint\" { MaxSize = Vector2.new(math.huge, if self._compact then 240 else 340) },\
+			scope:New \"UIPadding\" {\
+				PaddingTop = UDim.new(0, 8),\
+				PaddingBottom = UDim.new(0, 8),\
+				PaddingLeft = UDim.new(0, 12),\
+				PaddingRight = UDim.new(0, 12),\
 			},\
-		}\
-	else\
-		outputFrame = scope:New \"ScrollingFrame\" {\
-			Name = \"Output\",\
-			BackgroundTransparency = 1,\
-			BorderSizePixel = 0,\
-			Size = UDim2.new(1, -16, 1, -(ROW_HEIGHT + 12)),\
-			Position = UDim2.fromOffset(8, 4),\
-			CanvasSize = UDim2.new(),\
-			AutomaticCanvasSize = Enum.AutomaticSize.Y,\
-			ScrollBarThickness = 4,\
-			ScrollBarImageColor3 = Theming.color(scope, \"muted\"),\
-			ScrollingDirection = Enum.ScrollingDirection.Y,\
-			[Children] = {\
-				scope:New \"UIListLayout\" {\
-					FillDirection = Enum.FillDirection.Vertical,\
-					SortOrder = Enum.SortOrder.LayoutOrder,\
-					Padding = UDim.new(0, 2),\
-				},\
+			scope:New \"UIListLayout\" {\
+				FillDirection = Enum.FillDirection.Vertical,\
+				SortOrder = Enum.SortOrder.LayoutOrder,\
+				VerticalAlignment = Enum.VerticalAlignment.Bottom,\
+				Padding = UDim.new(0, 2),\
 			},\
-		}\
-	end\
+		},\
+	}\
 	self._outputFrame = outputFrame\
 \
 	-- ── autocomplete popover (semi-transparent; square in full, rounded compact)\
@@ -1250,9 +1228,7 @@ function Bar.new(config: Config)\
 		BackgroundTransparency = 0.06,\
 		BorderSizePixel = 0,\
 		AutomaticSize = Enum.AutomaticSize.Y,\
-		Size = if self._compact then UDim2.new(1, 0, 0, 0) else UDim2.new(0, 340, 0, 0),\
-		Position = if self._compact then UDim2.new(0, 0, 0, 0) else UDim2.new(0, 8, 1, -(ROW_HEIGHT + 6)),\
-		AnchorPoint = if self._compact then Vector2.new(0, 0) else Vector2.new(0, 1),\
+		Size = UDim2.new(1, 0, 0, 0), -- in-flow in the vertical stack, both modes\
 		LayoutOrder = 2,\
 		Visible = popoverOpen,\
 		[Children] = {\
@@ -1507,24 +1483,28 @@ function Bar.new(config: Config)\
 			},\
 		}\
 	else\
-		inputRow.AnchorPoint = Vector2.new(0, 1)\
-		inputRow.Position = UDim2.new(0, 0, 1, -6)\
+		-- a full-width solid panel that FITS its content (output caps + clips),\
+		-- growing from the input toward the aligned edge — no empty gap\
 		inputRow.Size = UDim2.new(1, 0, 0, ROW_HEIGHT)\
-		-- the full panel just docks to the chosen edge (internals unchanged)\
+		inputRow.LayoutOrder = 3\
+		local popoverBelow = align ~= \"Bottom\"\
+		outputFrame.LayoutOrder = if popoverBelow then 3 else 1\
+		popover.LayoutOrder = 2\
 		local anchor, vis, hid\
 		if align == \"Top\" then\
-			anchor, vis, hid = Vector2.new(0, 0), UDim2.new(0, 0, 0, 0), UDim2.new(0, 0, -0.45, 0)\
+			anchor, vis, hid = Vector2.new(0, 0), UDim2.new(0, 0, 0, 0), UDim2.new(0, 0, -0.6, 0)\
 		elseif align == \"Center\" then\
-			anchor, vis, hid = Vector2.new(0, 0.5), UDim2.new(0, 0, 0.5, 0), UDim2.new(0, 0, -0.45, 0)\
+			anchor, vis, hid = Vector2.new(0, 0.5), UDim2.new(0, 0, 0.5, 0), UDim2.new(0, 0, -0.6, 0)\
 		else\
-			anchor, vis, hid = Vector2.new(0, 1), UDim2.new(0, 0, 1, 0), UDim2.new(0, 0, 1.45, 0)\
+			anchor, vis, hid = Vector2.new(0, 1), UDim2.new(0, 0, 1, 0), UDim2.new(0, 0, 1.2, 0)\
 		end\
 		container = scope:New \"Frame\" {\
 			Name = \"ReplBar\",\
 			BackgroundColor3 = Theming.color(scope, \"bg\"),\
 			BackgroundTransparency = self._transparency,\
 			BorderSizePixel = 0,\
-			Size = UDim2.new(1, 0, 0.4, 0),\
+			Size = UDim2.new(1, 0, 0, 0),\
+			AutomaticSize = Enum.AutomaticSize.Y,\
 			AnchorPoint = anchor,\
 			Position = scope:Spring(\
 				scope:Computed(function(use)\
@@ -1535,6 +1515,15 @@ function Bar.new(config: Config)\
 			),\
 			[Children] = {\
 				scope:New \"UIStroke\" { Color = Theming.color(scope, \"border\"), Thickness = 1 },\
+				scope:New \"UIListLayout\" {\
+					FillDirection = Enum.FillDirection.Vertical,\
+					SortOrder = Enum.SortOrder.LayoutOrder,\
+					VerticalAlignment = if popoverBelow then Enum.VerticalAlignment.Top else Enum.VerticalAlignment.Bottom,\
+				},\
+				scope:New \"UIPadding\" {\
+					PaddingTop = UDim.new(0, 4),\
+					PaddingBottom = UDim.new(0, 4),\
+				},\
 				outputFrame,\
 				popover,\
 				inputRow,\
