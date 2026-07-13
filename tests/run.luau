@@ -19,6 +19,8 @@ local specs = {
 	{ name = "Theme", spec = require("./theme.spec") },
 	{ name = "Completer", spec = require("./completer.spec") },
 	{ name = "History", spec = require("./history.spec") },
+	{ name = "Signal", spec = require("./signal.spec") },
+	{ name = "Dispatcher", spec = require("./dispatcher.spec") },
 }
 
 local t = Harness.new()
