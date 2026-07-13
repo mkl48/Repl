@@ -9,6 +9,7 @@
 
 local Command = require(script.Parent.Parent.Parent._Classes.Command)
 local Types = require(script.Parent.Parent.Types)
+local Signal = require(script.Parent.Parent.Parent._Utility.Signal)
 
 local Registry = {}
 Registry.__index = Registry
@@ -22,6 +23,8 @@ function Registry.new()
 		aliasOf = {} :: { [string]: string }, -- alias/name (lowercased) → canonical name
 		order = {} :: { string }, -- registration order, for stable listing
 		hooks = { before = {} :: { Hook }, after = {} :: { Hook } },
+		--- Fires `(command)` on each successful registration (for cross-realm sync).
+		onRegister = Signal.new(),
 	}, Registry)
 end
 
@@ -60,6 +63,7 @@ function Registry:register(def: Command.Def): (Command.Command?, { string })
 		self.aliasOf[key(alias)] = command.name
 	end
 	table.insert(self.order, command.name)
+	self.onRegister:Fire(command)
 	return command, {}
 end
 

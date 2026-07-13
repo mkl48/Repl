@@ -149,6 +149,7 @@ function Command.parse(def: Def): Result
 			description = def.Description or "",
 			capabilities = (def.Capabilities :: { string }?) or {},
 			realm = realm,
+			argStrings = (def.Args :: { string }?) or {}, -- raw DSL, for cross-realm replication
 			args = args,
 			flags = flags,
 			flagByName = flagByName,

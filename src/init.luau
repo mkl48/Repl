@@ -104,8 +104,54 @@ local dispatcher = Dispatcher.new(Repl.Registry, {
 	remote = clientRemote,
 })
 
--- the server answers run requests authoritatively (re-parse, re-validate, run)
+-- ── cross-realm command replication ──────────────────────────────────────────
+-- a command registered on one realm becomes known on the other (metadata only —
+-- the Run stays on its realm), so both sides can autocomplete and route it.
+local proxyNames: { [string]: boolean } = {}
+
+local function serializeCommand(command)
+	return {
+		Name = command.name,
+		Aliases = command.aliases,
+		Description = command.description,
+		Realm = command.realm,
+		Capabilities = command.capabilities,
+		Args = command.argStrings,
+	}
+end
+
+local function registerProxy(metadata)
+	if type(metadata) ~= "table" or type(metadata.Name) ~= "string" then
+		return
+	end
+	if Repl.Registry:resolve(metadata.Name) then
+		return -- already known natively or as a proxy
+	end
+	proxyNames[metadata.Name] = true
+	Repl.Registry:register({
+		Name = metadata.Name,
+		Aliases = metadata.Aliases,
+		Description = metadata.Description,
+		Realm = metadata.Realm,
+		Capabilities = metadata.Capabilities,
+		Args = metadata.Args,
+		Run = function() end, -- a proxy: it routes to the other realm, never runs here
+	})
+end
+Repl._registerProxy = registerProxy
+
+-- publish real (non-proxy) registrations to the other realm
+Repl.Registry.onRegister:Connect(function(command)
+	if not proxyNames[command.name] then
+		Network.publishRegistration(serializeCommand(command))
+	end
+end)
+Network.onRegistration(registerProxy)
+
+-- the server answers run requests authoritatively (re-parse, re-validate, run),
+-- carries the built-ins, and serves its command list to clients
 if RunService:IsServer() then
+	Repl:InstallBuiltins()
 	Network.serve(function(line, player)
 		local nodes = {}
 		local result = dispatcher:run(line, {
@@ -116,6 +162,15 @@ if RunService:IsServer() then
 			end,
 		})
 		return { output = nodes, code = result.code, error = result.error }
+	end)
+	Network.serveList(function()
+		local list = {}
+		for _, command in Repl.Registry:all() do
+			if not proxyNames[command.name] then
+				table.insert(list, serializeCommand(command))
+			end
+		end
+		return list
 	end)
 end
 
@@ -193,6 +248,10 @@ function Repl:Start(config: any?)
 	config = config or {}
 	if config.Builtins ~= false then
 		Repl:InstallBuiltins()
+	end
+	-- pull the server's commands so they autocomplete (and route) client-side
+	for _, metadata in Network.requestList() do
+		Repl._registerProxy(metadata)
 	end
 	local t = config.Terminal or {}
 	local function pick(a, b)

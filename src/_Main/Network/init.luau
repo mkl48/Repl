@@ -43,4 +43,65 @@ function Network.run(line: string): any
 	return Substance.Post(CHANNEL, { line = line }):Await()
 end
 
+-- ── command registration replication ─────────────────────────────────────────
+-- a Strict (RemoteEvent) channel broadcasts a command's metadata to the other
+-- realm; a Solve channel lets a client pull the server's full command list.
+
+local REG = "Repl.Register"
+local LIST = "Repl.List"
+local regReady, listReady = false, false
+
+local function ensureReg()
+	if regReady then
+		return
+	end
+	regReady = true
+	Substance.Define("ReplRegisterAtom", {}):Compose(REG, "Strict")
+end
+
+local function ensureList()
+	if listReady then
+		return
+	end
+	listReady = true
+	Substance.Define("ReplListAtom", {}):Compose(LIST, "Solve")
+end
+
+--- Broadcasts one command's metadata to the other realm (server → all clients,
+--- or client → server).
+function Network.publishRegistration(metadata: any)
+	ensureReg()
+	pcall(function()
+		Substance.Post(REG, metadata)
+	end)
+end
+
+--- Receives metadata broadcasts from the other realm.
+function Network.onRegistration(handler: (metadata: any) -> ())
+	ensureReg()
+	Substance.Subscribe(REG, function(metadata: any)
+		handler(metadata)
+	end)
+end
+
+--- Server: answer a client's request for the full command list.
+function Network.serveList(getList: () -> { any })
+	ensureList()
+	Substance.Subscribe(LIST, function()
+		return getList()
+	end)
+end
+
+--- Client: pull the server's command list (empty on failure).
+function Network.requestList(): { any }
+	ensureList()
+	local okCall, list = pcall(function()
+		return Substance.Post(LIST, {}):Await()
+	end)
+	if okCall and type(list) == "table" then
+		return list
+	end
+	return {}
+end
+
 return Network
