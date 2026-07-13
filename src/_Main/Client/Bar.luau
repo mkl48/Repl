@@ -403,9 +403,11 @@ function Bar.new(config: Config)
 				return ""
 			end
 			local muted, accent = Theming.hex("muted"), Theming.hex("accent")
+			-- required args use angle brackets, which must be escaped for RichText
+			-- (a raw <who> reads as an invalid tag and voids the whole label)
 			local parts = { `<font color="{muted}">{h.name}</font>` }
 			for i, arg in h.args do
-				local usage = if arg.optional then `[{arg.name}]` else `<{arg.name}>`
+				local usage = if arg.optional then `[{arg.name}]` else `&lt;{arg.name}&gt;`
 				local color = if i == h.activeIndex then accent else muted
 				table.insert(parts, `<font color="{color}">{usage}</font>`)
 			end
