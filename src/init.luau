@@ -33,6 +33,9 @@ Repl.Theme = require(script._Utility.Theme)
 Repl.Result = Patterns.Result
 Repl.Option = Patterns.Option
 
+--- The icon map — upload `assets/icons/png/*` and set ids: `Repl.Icons.set(...)`.
+Repl.Icons = require(script._Utility.Render.Icons)
+
 --- The command registry (`Repl.Registry:RegisterCommand(def)`, `:RegisterHook`, …).
 Repl.Registry = Registry.new()
 local dispatcher = Dispatcher.new(Repl.Registry)

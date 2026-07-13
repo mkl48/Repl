@@ -13,6 +13,7 @@ local Fusion = require(script.Parent.Parent.Parent._Packages.Fusion)
 local Theme = require(script.Parent.Parent.Theme)
 local Theming = require(script.Parent.Theming)
 local Output = require(script.Parent.Output)
+local Icons = require(script.Parent.Icons)
 
 local Children = Fusion.Children
 
@@ -30,10 +31,12 @@ local function escape(text: string): string
 	return text
 end
 
--- one segment → a RichText run, colored by the *current* theme
+-- one segment → a RichText run, colored by the *current* theme. An icon that
+-- resolves to an uploaded image is drawn separately (see Terminal.line); an
+-- unmapped icon falls back to a `[name]` text marker so nothing is lost.
 local function richSegment(segment: Output.Segment): string
 	local body = escape(segment.text)
-	if segment.icon then
+	if segment.icon and not Icons.resolve(segment.icon) then
 		body = `[{escape(segment.icon)}] ` .. body
 	end
 	if segment.bold then
@@ -49,10 +52,10 @@ local function richSegment(segment: Output.Segment): string
 	return `<font color="{color}">{body}</font>`
 end
 
---- Renders a single [[Output]] Line as a RichText label (auto-height, wrapping).
-function Terminal.line(scope: any, line: Output.Line): TextLabel
+-- the RichText label carrying a line's text
+local function textLabel(scope: any, line: Output.Line): TextLabel
 	return scope:New "TextLabel" {
-		Name = `Line_{line.kind}`,
+		Name = "Text",
 		BackgroundTransparency = 1,
 		AutomaticSize = Enum.AutomaticSize.Y,
 		Size = UDim2.new(1, 0, 0, 0),
@@ -71,6 +74,47 @@ function Terminal.line(scope: any, line: Output.Line): TextLabel
 			end
 			return table.concat(parts)
 		end),
+	}
+end
+
+--- Renders a single [[Output]] Line. If its first segment carries an icon that
+--- resolves to an uploaded image, the line becomes an `[icon][text]` row (the
+--- icon tinted to that segment's color); otherwise it's a lone RichText label.
+function Terminal.line(scope: any, line: Output.Line): Instance
+	local lead = line.segments[1]
+	local leadAsset = lead and lead.icon and Icons.resolve(lead.icon)
+	if not leadAsset then
+		return textLabel(scope, line)
+	end
+	return scope:New "Frame" {
+		Name = `Line_{line.kind}`,
+		BackgroundTransparency = 1,
+		AutomaticSize = Enum.AutomaticSize.Y,
+		Size = UDim2.new(1, 0, 0, 0),
+		[Children] = {
+			scope:New "UIListLayout" {
+				FillDirection = Enum.FillDirection.Horizontal,
+				SortOrder = Enum.SortOrder.LayoutOrder,
+				VerticalAlignment = Enum.VerticalAlignment.Top,
+				Padding = UDim.new(0, 6),
+			},
+			scope:New "ImageLabel" {
+				Name = "Icon",
+				BackgroundTransparency = 1,
+				Image = leadAsset,
+				ImageColor3 = Theming.color(scope, lead.color or "text"),
+				ScaleType = Enum.ScaleType.Fit,
+				Size = UDim2.fromOffset(TEXT_SIZE, TEXT_SIZE),
+				LayoutOrder = 1,
+			},
+			(function()
+				local label = textLabel(scope, line)
+				label.LayoutOrder = 2
+				-- fill the width the icon leaves
+				scope:New "UIFlexItem" { FlexMode = Enum.UIFlexMode.Fill, Parent = label }
+				return label
+			end)(),
+		},
 	}
 end
 

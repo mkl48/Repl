@@ -37,6 +37,9 @@ Repl.Theme = require(script._Utility.Theme)\
 Repl.Result = Patterns.Result\
 Repl.Option = Patterns.Option\
 \
+--- The icon map — upload `assets/icons/png/*` and set ids: `Repl.Icons.set(...)`.\
+Repl.Icons = require(script._Utility.Render.Icons)\
+\
 --- The command registry (`Repl.Registry:RegisterCommand(def)`, `:RegisterHook`, …).\
 Repl.Registry = Registry.new()\
 local dispatcher = Dispatcher.new(Repl.Registry)\
@@ -7870,6 +7873,84 @@ Render.Output = require(script.Output)\
 \
 return Render\
 "},
+{"Repl/_Utility/Render/Icons","ModuleScript","--- The **icon map**: icon name → Roblox asset id. The PNGs live in\
+--- `assets/icons/png` (white, so they tint to the theme via `ImageColor3`) — upload\
+--- them and fill in the ids below, or set them at runtime with `Icons.set` /\
+--- `Repl.Icons.set(name, \"rbxassetid://…\")`. Until an id is set, the [[Terminal]]\
+--- falls back to rendering `[name]` as text, so nothing breaks.\
+---\
+--- Semantic aliases (`success`, `error`, `warn`, `prompt`, …) map onto the base\
+--- glyphs so `ctx:icon(\"success\", …)` and Output line kinds resolve without\
+--- knowing the underlying icon.\
+--- @section Render\
+--- @client\
+\
+local Icons = {}\
+\
+--- name → `rbxassetid://…`. Fill these after uploading `assets/icons/png/*`.\
+Icons.assets = {\
+	[\"check\"] = nil :: string?,\
+	[\"x\"] = nil :: string?,\
+	[\"info\"] = nil :: string?,\
+	[\"warn\"] = nil :: string?,\
+	[\"chevron-right\"] = nil :: string?,\
+	[\"chevron-down\"] = nil :: string?,\
+	[\"terminal\"] = nil :: string?,\
+	[\"circle-check\"] = nil :: string?,\
+	[\"circle-x\"] = nil :: string?,\
+	[\"circle-alert\"] = nil :: string?,\
+	[\"arrow-right\"] = nil :: string?,\
+	[\"search\"] = nil :: string?,\
+	[\"folder\"] = nil :: string?,\
+	[\"zap\"] = nil :: string?,\
+	[\"clock\"] = nil :: string?,\
+	[\"user\"] = nil :: string?,\
+	[\"hash\"] = nil :: string?,\
+	[\"play\"] = nil :: string?,\
+	[\"settings\"] = nil :: string?,\
+	[\"list\"] = nil :: string?,\
+} :: { [string]: string? }\
+\
+--- semantic name → base glyph\
+Icons.aliases = {\
+	success = \"check\",\
+	error = \"x\",\
+	err = \"x\",\
+	warn = \"warn\",\
+	warning = \"warn\",\
+	info = \"info\",\
+	prompt = \"chevron-right\",\
+	ok = \"circle-check\",\
+	fail = \"circle-x\",\
+	alert = \"circle-alert\",\
+	help = \"info\",\
+	commands = \"list\",\
+	time = \"clock\",\
+}\
+\
+--- Resolves an icon name (or alias) to its asset id, or nil if unset.\
+function Icons.resolve(name: string): string?\
+	local base = Icons.aliases[name] or name\
+	return Icons.assets[base]\
+end\
+\
+--- Sets an asset id for a base icon name (accepts a number or a full string).\
+function Icons.set(name: string, assetId: string | number)\
+	if type(assetId) == \"number\" then\
+		assetId = `rbxassetid://{assetId}`\
+	end\
+	Icons.assets[name] = assetId\
+end\
+\
+--- Bulk-set from a `{ [name] = id }` table.\
+function Icons.setMany(map: { [string]: string | number })\
+	for name, assetId in map do\
+		Icons.set(name, assetId)\
+	end\
+end\
+\
+return Icons\
+"},
 {"Repl/_Utility/Render/Output","ModuleScript","--- The **structured output model**. Commands never print strings — they emit\
 --- `Segment`s (styled text runs), grouped into `Line`s, optionally grouped into\
 --- a `Block` (a table, an ascii art, a status panel). Colors are *semantic\
@@ -8027,6 +8108,7 @@ local Fusion = require(script.Parent.Parent.Parent._Packages.Fusion)\
 local Theme = require(script.Parent.Parent.Theme)\
 local Theming = require(script.Parent.Theming)\
 local Output = require(script.Parent.Output)\
+local Icons = require(script.Parent.Icons)\
 \
 local Children = Fusion.Children\
 \
@@ -8044,10 +8126,12 @@ local function escape(text: string): string\
 	return text\
 end\
 \
--- one segment → a RichText run, colored by the *current* theme\
+-- one segment → a RichText run, colored by the *current* theme. An icon that\
+-- resolves to an uploaded image is drawn separately (see Terminal.line); an\
+-- unmapped icon falls back to a `[name]` text marker so nothing is lost.\
 local function richSegment(segment: Output.Segment): string\
 	local body = escape(segment.text)\
-	if segment.icon then\
+	if segment.icon and not Icons.resolve(segment.icon) then\
 		body = `[{escape(segment.icon)}] ` .. body\
 	end\
 	if segment.bold then\
@@ -8063,10 +8147,10 @@ local function richSegment(segment: Output.Segment): string\
 	return `<font color=\"{color}\">{body}</font>`\
 end\
 \
---- Renders a single [[Output]] Line as a RichText label (auto-height, wrapping).\
-function Terminal.line(scope: any, line: Output.Line): TextLabel\
+-- the RichText label carrying a line's text\
+local function textLabel(scope: any, line: Output.Line): TextLabel\
 	return scope:New \"TextLabel\" {\
-		Name = `Line_{line.kind}`,\
+		Name = \"Text\",\
 		BackgroundTransparency = 1,\
 		AutomaticSize = Enum.AutomaticSize.Y,\
 		Size = UDim2.new(1, 0, 0, 0),\
@@ -8085,6 +8169,47 @@ function Terminal.line(scope: any, line: Output.Line): TextLabel\
 			end\
 			return table.concat(parts)\
 		end),\
+	}\
+end\
+\
+--- Renders a single [[Output]] Line. If its first segment carries an icon that\
+--- resolves to an uploaded image, the line becomes an `[icon][text]` row (the\
+--- icon tinted to that segment's color); otherwise it's a lone RichText label.\
+function Terminal.line(scope: any, line: Output.Line): Instance\
+	local lead = line.segments[1]\
+	local leadAsset = lead and lead.icon and Icons.resolve(lead.icon)\
+	if not leadAsset then\
+		return textLabel(scope, line)\
+	end\
+	return scope:New \"Frame\" {\
+		Name = `Line_{line.kind}`,\
+		BackgroundTransparency = 1,\
+		AutomaticSize = Enum.AutomaticSize.Y,\
+		Size = UDim2.new(1, 0, 0, 0),\
+		[Children] = {\
+			scope:New \"UIListLayout\" {\
+				FillDirection = Enum.FillDirection.Horizontal,\
+				SortOrder = Enum.SortOrder.LayoutOrder,\
+				VerticalAlignment = Enum.VerticalAlignment.Top,\
+				Padding = UDim.new(0, 6),\
+			},\
+			scope:New \"ImageLabel\" {\
+				Name = \"Icon\",\
+				BackgroundTransparency = 1,\
+				Image = leadAsset,\
+				ImageColor3 = Theming.color(scope, lead.color or \"text\"),\
+				ScaleType = Enum.ScaleType.Fit,\
+				Size = UDim2.fromOffset(TEXT_SIZE, TEXT_SIZE),\
+				LayoutOrder = 1,\
+			},\
+			(function()\
+				local label = textLabel(scope, line)\
+				label.LayoutOrder = 2\
+				-- fill the width the icon leaves\
+				scope:New \"UIFlexItem\" { FlexMode = Enum.UIFlexMode.Fill, Parent = label }\
+				return label\
+			end)(),\
+		},\
 	}\
 end\
 \
