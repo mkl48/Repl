@@ -9,7 +9,7 @@
 local luau = require("@lune/luau")
 local fs = require("@lune/fs")
 
-local DIR = "src/Shell"
+local DIR = "src/_Utility/Shell"
 
 local handleMt = {
 	__index = function(self, key)

@@ -2,9 +2,58 @@
 -- Paste this whole file into the Roblox Studio command bar.
 -- Recreates ReplicatedStorage.Repl.
 local MODULES = {
-{"Repl","Folder",nil},
-{"Repl/Shell","Folder",nil},
-{"Repl/Shell/Ast","ModuleScript","--- AST node kinds for the Repl shell. The [[Parser]] builds plain tables tagged\
+{"Repl","ModuleScript","--- Repl — the umbrella module. `require(ReplicatedStorage.Repl)` returns the\
+--- whole public API; it's realm-aware (server → registry/authority, client →\
+--- the bar). A standalone module: nothing to wire together.\
+---\
+--- **Status: early.** The shell front end (lexer → parser → AST) is in and\
+--- tested; the registry, type engine, authority, context, network, and the\
+--- Fusion bar are being built up the pipeline. See DESIGN.md.\
+--- @section Overview\
+--- @client\
+\
+local Repl = {}\
+\
+-- Internal subsystems live under the _-prefixed folders:\
+--   _Classes  · _Main (Client/Server/Types/Network) · _Patterns\
+--   _Utility (Shell/Fuzzy/Render) · _Commands (_Client/_Server/_Shared/_Types)\
+--   _Packages (vendored deps)\
+\
+-- Available today: the shell front end, for parsing / analysis.\
+Repl.Shell = require(script._Utility.Shell)\
+\
+return Repl\
+"},
+{"Repl/_Classes","Folder",nil},
+{"Repl/_Commands","Folder",nil},
+{"Repl/_Commands/_Client","Folder",nil},
+{"Repl/_Commands/_Server","Folder",nil},
+{"Repl/_Commands/_Shared","Folder",nil},
+{"Repl/_Commands/_Types","Folder",nil},
+{"Repl/_Main","Folder",nil},
+{"Repl/_Packages","Folder",nil},
+{"Repl/_Patterns","Folder",nil},
+{"Repl/_Utility","Folder",nil},
+{"Repl/_Utility/Shell","ModuleScript","--- The shell front end: source → tokens → AST. Re-exports the stages\
+--- ([[Lexer]], [[Parser]], [[Ast]], [[Token]]) and the two entry points.\
+--- @section Shell\
+--- @client\
+\
+local Shell = {}\
+\
+Shell.Token = require(script.Token)\
+Shell.Lexer = require(script.Lexer)\
+Shell.Ast = require(script.Ast)\
+Shell.Parser = require(script.Parser)\
+\
+--- Tokenize source into a flat token list + diagnostics.\
+Shell.tokenize = Shell.Lexer.tokenize\
+--- Tokenize and parse source into an AST + diagnostics.\
+Shell.parse = Shell.Parser.parse\
+\
+return Shell\
+"},
+{"Repl/_Utility/Shell/Ast","ModuleScript","--- AST node kinds for the Repl shell. The [[Parser]] builds plain tables tagged\
 --- with a `kind` from `Ast.Kind`; the [[Evaluator]] dispatches on it.\
 --- @section Shell\
 --- @client\
@@ -36,7 +85,7 @@ Ast.Kind = {\
 \
 return Ast\
 "},
-{"Repl/Shell/Lexer","ModuleScript","--- The Repl shell lexer: source text → a flat list of neutral [[Token]]s.\
+{"Repl/_Utility/Shell/Lexer","ModuleScript","--- The Repl shell lexer: source text → a flat list of neutral [[Token]]s.\
 ---\
 --- Neutral means no FLAG / DIRECTIVE / SLASH_REF / SLASH_DIV tokens: `-`, `--`,\
 --- `/`, `//` come out as plain operator tokens and the [[Parser]] assigns meaning\
@@ -404,7 +453,7 @@ end\
 \
 return Lexer\
 "},
-{"Repl/Shell/Parser","ModuleScript","--- Recursive-descent parser for the Repl shell: [[Token]]s → [[Ast]] + diagnostics.\
+{"Repl/_Utility/Shell/Parser","ModuleScript","--- Recursive-descent parser for the Repl shell: [[Token]]s → [[Ast]] + diagnostics.\
 ---\
 --- The parser is where **context** lives: the same `/` token becomes a reference\
 --- in value position and division in operator position; `&&` is chain control\
@@ -1015,7 +1064,7 @@ end\
 \
 return Parser\
 "},
-{"Repl/Shell/Token","ModuleScript","--- Token kinds and the `Token` shape for the Repl shell lexer.\
+{"Repl/_Utility/Shell/Token","ModuleScript","--- Token kinds and the `Token` shape for the Repl shell lexer.\
 ---\
 --- The lexer is deliberately **neutral**: it never decides whether a token means\
 --- \"reference\" vs \"division\" or \"flag\" vs \"minus\". It emits the smallest tokens\
