@@ -11,11 +11,14 @@ local Command = {}
 
 export type Confirm = string | { message: string?, type: ("y/n" | "phrase")?, phrase: string? }
 
+export type Realm = "Server" | "Client" | "Shared"
+
 export type Def = {
 	Name: string,
 	Aliases: { string }?,
 	Description: string?,
 	Capabilities: { string }?,
+	Realm: Realm?, -- where it runs / is validated (default "Server")
 	Args: { string }?,
 	Confirm: Confirm?,
 	Run: (...any) -> ...any,
@@ -26,12 +29,15 @@ export type Command = {
 	aliases: { string },
 	description: string,
 	capabilities: { string },
+	realm: Realm,
 	args: { Argument.Spec }, -- positional arguments, in order
 	flags: { Argument.Spec }, -- -x / --name options
 	flagByName: { [string]: Argument.Spec }, -- every flag alias → its spec
 	confirm: Confirm?,
 	run: (...any) -> ...any,
 }
+
+local REALMS: { [string]: boolean } = { Server = true, Client = true, Shared = true }
 
 export type Result = {
 	command: Command?,
@@ -126,6 +132,12 @@ function Command.parse(def: Def): Result
 		fail("Run must be a function")
 	end
 
+	local realm = def.Realm or "Server"
+	if not REALMS[realm] then
+		fail(`Realm must be "Server", "Client", or "Shared", got {tostring(def.Realm)}`)
+		realm = "Server"
+	end
+
 	if #errors > 0 then
 		return { command = nil, errors = errors }
 	end
@@ -136,6 +148,7 @@ function Command.parse(def: Def): Result
 			aliases = aliases,
 			description = def.Description or "",
 			capabilities = (def.Capabilities :: { string }?) or {},
+			realm = realm,
 			args = args,
 			flags = flags,
 			flagByName = flagByName,

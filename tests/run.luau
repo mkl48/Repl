@@ -22,6 +22,7 @@ local specs = {
 	{ name = "Signal", spec = require("./signal.spec") },
 	{ name = "Dispatcher", spec = require("./dispatcher.spec") },
 	{ name = "EventBus", spec = require("./eventbus.spec") },
+	{ name = "Authority", spec = require("./authority.spec") },
 }
 
 local t = Harness.new()

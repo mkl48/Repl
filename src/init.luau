@@ -21,6 +21,7 @@ local Players = game:GetService("Players")
 
 local Registry = require(script._Main.Server.Registry)
 local Dispatcher = require(script._Main.Server.Dispatcher)
+local Authority = require(script._Main.Server.Authority)
 local Signal = require(script._Utility.Signal)
 local Patterns = require(script._Patterns)
 
@@ -41,7 +42,26 @@ Repl.Icons = require(script._Utility.Render.Icons)
 
 --- The command registry (`Repl.Registry:RegisterCommand(def)`, `:RegisterHook`, …).
 Repl.Registry = Registry.new()
-local dispatcher = Dispatcher.new(Repl.Registry)
+
+--- Capability-based auth (`Repl.Authority:DefineRole(...)`, `:Assign(...)`, …).
+Repl.Authority = Authority.new()
+
+-- validate a command's capabilities before it runs. A command with no declared
+-- capabilities is "base level" and always allowed; one with capabilities is
+-- checked against the executor's roles (Server/Shared authoritatively on the
+-- server once Network lands; Client-side for now).
+local dispatcher = Dispatcher.new(Repl.Registry, {
+	authorize = function(command, exec)
+		if #command.capabilities == 0 then
+			return true
+		end
+		local allowed, missing = Repl.Authority:CanAll(exec.executor, command.capabilities)
+		if allowed then
+			return true
+		end
+		return false, `missing capability: {table.concat(missing, ", ")}`
+	end,
+})
 
 -- ── dev-facing state + events ────────────────────────────────────────────────
 Repl.Focused = false

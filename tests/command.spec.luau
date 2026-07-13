@@ -62,5 +62,12 @@ return function(t)
 		eq(result.command.description, "", "empty description")
 		eq(#result.command.aliases, 0, "no aliases")
 		eq(#result.command.capabilities, 0, "no capabilities")
+		eq(result.command.realm, "Server", "defaults to Server")
+	end)
+
+	test("Realm is validated", function()
+		eq(Command.parse({ Name = "c", Realm = "Client", Run = noop }).command.realm, "Client")
+		eq(Command.parse({ Name = "s", Realm = "Shared", Run = noop }).command.realm, "Shared")
+		ok(Command.parse({ Name = "b", Realm = "Nonsense", Run = noop }).command == nil, "bad realm rejected")
 	end)
 end
