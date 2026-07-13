@@ -9,6 +9,7 @@ local specs = {
 	{ name = "ReturnPool", spec = require("./returnpool.spec") },
 	{ name = "Expr", spec = require("./expr.spec") },
 	{ name = "Types", spec = require("./types.spec") },
+	{ name = "Argument", spec = require("./argument.spec") },
 }
 
 local t = Harness.new()
