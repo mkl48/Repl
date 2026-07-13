@@ -15,7 +15,8 @@ local Repl = {}
 --   _Utility (Shell/Fuzzy/Render) · _Commands (_Client/_Server/_Shared/_Types)
 --   _Packages (vendored deps)
 
--- Available today: the shell front end, for parsing / analysis.
+-- Available today: the shell front end, and the type engine.
 Repl.Shell = require(script._Utility.Shell)
+Repl.Types = require(script._Main.Types)
 
 return Repl

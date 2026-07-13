@@ -7,6 +7,8 @@ local specs = {
 	{ name = "Lexer", spec = require("./lexer.spec") },
 	{ name = "Parser", spec = require("./parser.spec") },
 	{ name = "ReturnPool", spec = require("./returnpool.spec") },
+	{ name = "Expr", spec = require("./expr.spec") },
+	{ name = "Types", spec = require("./types.spec") },
 }
 
 local t = Harness.new()

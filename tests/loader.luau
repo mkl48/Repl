@@ -1,15 +1,17 @@
--- Headless module loader for Repl's shell sources.
+-- Headless module loader for Repl's sources.
 --
--- The source modules use Roblox-style requires (`require(script.Parent.Token)`).
--- Lune has no `script`, so this loader emulates the instance tree: `src/Shell/
--- init.luau` becomes the "Shell" ModuleScript and every other `src/Shell/*.luau`
--- becomes a child of it, loaded with a custom environment that injects the right
--- `script` handle and a `require` that resolves handles. Standard globals survive.
+-- The source modules use Roblox-style requires (`require(script.Parent.Token)`,
+-- `require(script._Utility.Shell)`). Lune has no `script`, so this loader
+-- emulates the whole `src` instance tree: a folder with an init.lua(u) becomes a
+-- ModuleScript with children; every other .lua(u) becomes a ModuleScript; other
+-- folders become Folders. Each module loads with a custom environment injecting
+-- the right `script` handle and a `require` that resolves handles.
 
 local luau = require("@lune/luau")
 local fs = require("@lune/fs")
 
-local DIR = "src/_Utility/Shell"
+local ROOT_DIR = "src"
+local ROOT_NAME = "Repl"
 
 local handleMt = {
 	__index = function(self, key)
@@ -22,22 +24,42 @@ local handleMt = {
 	end,
 }
 
-local function makeHandle(name: string, file: string)
-	return setmetatable({ Name = name, file = file, children = {}, Parent = nil }, handleMt)
-end
-
-local shell = makeHandle("Shell", "init")
-local srcFolder = setmetatable({ Name = "src", children = { Shell = shell } }, handleMt)
-shell.Parent = srcFolder
-
-for _, entry in fs.readDir(DIR) do
-	local name = entry:match("^(.+)%.luau$")
-	if name and name ~= "init" then
-		local child = makeHandle(name, name)
-		child.Parent = shell
-		shell.children[name] = child
+local function findInit(dir: string): string?
+	for _, name in { "init.lua", "init.luau" } do
+		if fs.isFile(dir .. "/" .. name) then
+			return dir .. "/" .. name
+		end
 	end
+	return nil
 end
+
+-- build a handle tree for `dir`. `file` is the source path if this node is a
+-- ModuleScript (a folder's init, or a leaf .luau), else nil (a plain Folder).
+local function build(dir: string, name: string, file: string?)
+	local handle = setmetatable({ Name = name, file = file, children = {}, Parent = nil }, handleMt)
+	local names = fs.readDir(dir)
+	table.sort(names)
+	for _, entry in names do
+		local full = dir .. "/" .. entry
+		if fs.isDir(full) then
+			local child = build(full, entry, findInit(full))
+			child.Parent = handle
+			handle.children[entry] = child
+		else
+			local modName = entry:match("^(.+)%.luau?$")
+			if modName and modName ~= "init" then
+				local child = setmetatable(
+					{ Name = modName, file = full, children = {}, Parent = handle },
+					handleMt
+				)
+				handle.children[modName] = child
+			end
+		end
+	end
+	return handle
+end
+
+local root = build(ROOT_DIR, ROOT_NAME, findInit(ROOT_DIR))
 
 local cache: { [any]: any } = {}
 
@@ -46,8 +68,10 @@ local function customRequire(handle)
 		return cache[handle]
 	end
 	local file = rawget(handle, "file")
-	local source = fs.readFile(`{DIR}/{file}.luau`)
-	local chunk = luau.load(source, {
+	if not file then
+		error(`Repl loader: '{rawget(handle, "Name")}' is a Folder, not a ModuleScript`, 2)
+	end
+	local chunk = luau.load(fs.readFile(file), {
 		debugName = rawget(handle, "Name"),
 		environment = { script = handle, require = customRequire },
 	})
@@ -56,18 +80,30 @@ local function customRequire(handle)
 	return result
 end
 
-local Loader = {}
+-- depth-first search for a module handle by Name (names are unique in Repl)
+local function findByName(handle, name)
+	if rawget(handle, "Name") == name and rawget(handle, "file") then
+		return handle
+	end
+	for _, child in rawget(handle, "children") do
+		local found = findByName(child, name)
+		if found then
+			return found
+		end
+	end
+	return nil
+end
 
---- get("Lexer") -> the Lexer module; get("Shell") -> the Shell module (init.luau).
+local Loader = {}
+Loader.root = root
+
+--- get("Lexer") -> the Lexer module, found by name anywhere in the tree.
 function Loader.get(name: string): any
-	if name == "Shell" or name == "init" then
-		return customRequire(shell)
+	local handle = findByName(root, name)
+	if not handle then
+		error(`Repl loader: no module named '{name}' under {ROOT_DIR}`, 2)
 	end
-	local child = shell.children[name]
-	if not child then
-		error(`Repl loader: no module '{name}' in {DIR}`, 2)
-	end
-	return customRequire(child)
+	return customRequire(handle)
 end
 
 return Loader
