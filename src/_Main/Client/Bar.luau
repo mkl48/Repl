@@ -41,6 +41,8 @@ export type Config = {
 	parent: Instance?, -- defaults to a fresh ScreenGui in PlayerGui
 	activationKeys: { Enum.KeyCode }?, -- default { Backquote }
 	cursorStyle: ("block" | "line" | "underline")?, -- default "block"
+	compact: boolean?, -- single-bar (Cmdr-like) layout instead of the full panel
+	width: number?, -- compact bar width in px (default 720)
 }
 
 local FONT = Enum.Font.Code
@@ -68,8 +70,9 @@ function Bar.new(config: Config)
 	self._prompt = config.prompt or "kr3ative/repl"
 	self._activationKeys = config.activationKeys or { Enum.KeyCode.Backquote }
 	self._cursorStyle = config.cursorStyle or "block"
+	self._compact = config.compact == true
+	self._width = config.width or 720
 	self._suppressed = false
-	self._restore = {} -- saved player settings while focused
 
 	-- ── dev-facing state + events ────────────────────────────────────────────
 	self.Opened = Signal.new()
@@ -95,7 +98,26 @@ function Bar.new(config: Config)
 		return Completer.ghost(self._registry, use(input))
 	end)
 	local popoverOpen = scope:Computed(function(use)
-		return use(focused) and use(input) ~= "" and not use(dismissed) and #use(completions) > 0
+		if not use(focused) or use(dismissed) then
+			return false
+		end
+		local text = use(input)
+		if string.gsub(text, "%s", "") == "" then
+			return false -- nothing typed
+		end
+		local list = use(completions)
+		if #list == 0 then
+			return false
+		end
+		if #list == 1 then
+			-- the only suggestion is exactly what's already typed → nothing to add
+			local only = list[1]
+			local word = string.sub(text, only.replaceStart, only.replaceEnd)
+			if string.lower(only.text) == string.lower(word) then
+				return false
+			end
+		end
+		return true
 	end)
 	self._completions = completions
 	self._popoverOpen = popoverOpen
@@ -165,38 +187,73 @@ function Bar.new(config: Config)
 	self._submitLine = submit
 
 	-- ── output area ──────────────────────────────────────────────────────────
-	local outputFrame = scope:New "ScrollingFrame" {
-		Name = "Output",
-		BackgroundTransparency = 1,
-		BorderSizePixel = 0,
-		Size = UDim2.new(1, -16, 1, -(ROW_HEIGHT + 12)),
-		Position = UDim2.fromOffset(8, 4),
-		CanvasSize = UDim2.new(),
-		AutomaticCanvasSize = Enum.AutomaticSize.Y,
-		ScrollBarThickness = 4,
-		ScrollBarImageColor3 = Theming.color(scope, "muted"),
-		ScrollingDirection = Enum.ScrollingDirection.Y,
-		[Children] = {
-			scope:New "UIListLayout" {
-				FillDirection = Enum.FillDirection.Vertical,
-				SortOrder = Enum.SortOrder.LayoutOrder,
-				Padding = UDim.new(0, 2),
+	local outputFrame
+	if self._compact then
+		-- a compact log that grows upward above the bar, capped and clipped
+		outputFrame = scope:New "Frame" {
+			Name = "Output",
+			BackgroundColor3 = Theming.color(scope, "bg"),
+			BackgroundTransparency = 0.15,
+			BorderSizePixel = 0,
+			AutomaticSize = Enum.AutomaticSize.Y,
+			Size = UDim2.new(1, 0, 0, 0),
+			ClipsDescendants = true,
+			Visible = false, -- shown once something is printed
+			LayoutOrder = 1,
+			[Children] = {
+				scope:New "UICorner" { CornerRadius = UDim.new(0, 6) },
+				scope:New "UISizeConstraint" { MaxSize = Vector2.new(math.huge, 240) },
+				scope:New "UIPadding" {
+					PaddingTop = UDim.new(0, 6),
+					PaddingBottom = UDim.new(0, 6),
+					PaddingLeft = UDim.new(0, 10),
+					PaddingRight = UDim.new(0, 10),
+				},
+				scope:New "UIListLayout" {
+					FillDirection = Enum.FillDirection.Vertical,
+					SortOrder = Enum.SortOrder.LayoutOrder,
+					VerticalAlignment = Enum.VerticalAlignment.Bottom,
+					Padding = UDim.new(0, 2),
+				},
 			},
-		},
-	}
+		}
+	else
+		outputFrame = scope:New "ScrollingFrame" {
+			Name = "Output",
+			BackgroundTransparency = 1,
+			BorderSizePixel = 0,
+			Size = UDim2.new(1, -16, 1, -(ROW_HEIGHT + 12)),
+			Position = UDim2.fromOffset(8, 4),
+			CanvasSize = UDim2.new(),
+			AutomaticCanvasSize = Enum.AutomaticSize.Y,
+			ScrollBarThickness = 4,
+			ScrollBarImageColor3 = Theming.color(scope, "muted"),
+			ScrollingDirection = Enum.ScrollingDirection.Y,
+			[Children] = {
+				scope:New "UIListLayout" {
+					FillDirection = Enum.FillDirection.Vertical,
+					SortOrder = Enum.SortOrder.LayoutOrder,
+					Padding = UDim.new(0, 2),
+				},
+			},
+		}
+	end
 	self._outputFrame = outputFrame
 
-	-- ── autocomplete popover (square, to match the terminal) ─────────────────
+	-- ── autocomplete popover (semi-transparent; square in full, rounded compact)
 	local popover = scope:New "Frame" {
 		Name = "Autocomplete",
 		BackgroundColor3 = Theming.color(scope, "bgAlt"),
+		BackgroundTransparency = 0.06,
 		BorderSizePixel = 0,
 		AutomaticSize = Enum.AutomaticSize.Y,
-		Size = UDim2.new(0, 340, 0, 0),
-		Position = UDim2.new(0, 8, 1, -(ROW_HEIGHT + 6)),
-		AnchorPoint = Vector2.new(0, 1),
+		Size = if self._compact then UDim2.new(1, 0, 0, 0) else UDim2.new(0, 340, 0, 0),
+		Position = if self._compact then UDim2.new(0, 0, 0, 0) else UDim2.new(0, 8, 1, -(ROW_HEIGHT + 6)),
+		AnchorPoint = if self._compact then Vector2.new(0, 0) else Vector2.new(0, 1),
+		LayoutOrder = 2,
 		Visible = popoverOpen,
 		[Children] = {
+			scope:New "UICorner" { CornerRadius = UDim.new(0, if self._compact then 6 else 0) },
 			scope:New "UIStroke" { Color = Theming.color(scope, "border"), Thickness = 1 },
 			scope:New "UIListLayout" {
 				FillDirection = Enum.FillDirection.Vertical,
@@ -326,6 +383,12 @@ function Bar.new(config: Config)
 		PlaceholderColor3 = Theming.color(scope, "muted"),
 		ZIndex = 2,
 		[OnChange "Text"] = function(newText)
+			-- the Tab/Enter we handle for completion also reaches the box as a
+			-- literal character; strip it so it never lands in the input
+			if string.find(newText, "[\t\n]") then
+				textBox.Text = (string.gsub(newText, "[\t\n]", ""))
+				return -- the rewrite re-fires this handler cleanly
+			end
 			input:set(newText)
 			dismissed:set(false)
 			selected:set(1)
@@ -358,18 +421,18 @@ function Bar.new(config: Config)
 	}
 	self._textBox = textBox
 
+	-- shared input row (prompt + field); placed differently per mode
 	local inputRow = scope:New "Frame" {
 		Name = "InputRow",
 		BackgroundTransparency = 1,
-		Size = UDim2.new(1, -16, 0, ROW_HEIGHT),
-		Position = UDim2.new(0, 8, 1, -6),
-		AnchorPoint = Vector2.new(0, 1),
+		Size = UDim2.new(1, 0, 1, 0),
 		[Children] = {
 			scope:New "UIListLayout" {
 				FillDirection = Enum.FillDirection.Horizontal,
 				SortOrder = Enum.SortOrder.LayoutOrder,
 				VerticalAlignment = Enum.VerticalAlignment.Center,
 			},
+			scope:New "UIPadding" { PaddingLeft = UDim.new(0, 10), PaddingRight = UDim.new(0, 10) },
 			promptLabel,
 			scope:New "Frame" {
 				Name = "Field",
@@ -385,26 +448,73 @@ function Bar.new(config: Config)
 		},
 	}
 
-	local container = scope:New "Frame" {
-		Name = "ReplBar",
-		BackgroundColor3 = Theming.color(scope, "bg"),
-		BorderSizePixel = 0,
-		Size = UDim2.new(1, 0, 0.4, 0),
-		AnchorPoint = Vector2.new(0, 1),
-		Position = scope:Spring(
-			scope:Computed(function(use)
-				return if use(visible) then UDim2.new(0, 0, 1, 0) else UDim2.new(0, 0, 1.45, 0)
-			end),
-			28,
-			1
-		),
-		[Children] = {
-			scope:New "UIStroke" { Color = Theming.color(scope, "border"), Thickness = 1 },
-			outputFrame,
-			popover,
-			inputRow,
-		},
-	}
+	local container
+	if self._compact then
+		-- one Cmdr-like bar; output + popover stack above it, bottom-anchored
+		local bar = scope:New "Frame" {
+			Name = "Bar",
+			BackgroundColor3 = Theming.color(scope, "bg"),
+			BackgroundTransparency = 0.05,
+			BorderSizePixel = 0,
+			Size = UDim2.new(1, 0, 0, ROW_HEIGHT + 14),
+			LayoutOrder = 3,
+			[Children] = {
+				scope:New "UICorner" { CornerRadius = UDim.new(0, 6) },
+				scope:New "UIStroke" { Color = Theming.color(scope, "border"), Thickness = 1 },
+				inputRow,
+			},
+		}
+		container = scope:New "Frame" {
+			Name = "ReplBar",
+			BackgroundTransparency = 1,
+			AnchorPoint = Vector2.new(0.5, 1),
+			Size = UDim2.new(0, self._width, 0, 0),
+			AutomaticSize = Enum.AutomaticSize.Y,
+			Position = scope:Spring(
+				scope:Computed(function(use)
+					return if use(visible) then UDim2.new(0.5, 0, 1, -12) else UDim2.new(0.5, 0, 1.6, 0)
+				end),
+				28,
+				1
+			),
+			[Children] = {
+				scope:New "UIListLayout" {
+					FillDirection = Enum.FillDirection.Vertical,
+					SortOrder = Enum.SortOrder.LayoutOrder,
+					HorizontalAlignment = Enum.HorizontalAlignment.Center,
+					VerticalAlignment = Enum.VerticalAlignment.Bottom,
+					Padding = UDim.new(0, 6),
+				},
+				outputFrame,
+				popover,
+				bar,
+			},
+		}
+	else
+		inputRow.AnchorPoint = Vector2.new(0, 1)
+		inputRow.Position = UDim2.new(0, 0, 1, -6)
+		inputRow.Size = UDim2.new(1, 0, 0, ROW_HEIGHT)
+		container = scope:New "Frame" {
+			Name = "ReplBar",
+			BackgroundColor3 = Theming.color(scope, "bg"),
+			BorderSizePixel = 0,
+			Size = UDim2.new(1, 0, 0.4, 0),
+			AnchorPoint = Vector2.new(0, 1),
+			Position = scope:Spring(
+				scope:Computed(function(use)
+					return if use(visible) then UDim2.new(0, 0, 1, 0) else UDim2.new(0, 0, 1.45, 0)
+				end),
+				28,
+				1
+			),
+			[Children] = {
+				scope:New "UIStroke" { Color = Theming.color(scope, "border"), Thickness = 1 },
+				outputFrame,
+				popover,
+				inputRow,
+			},
+		}
+	end
 
 	self._gui = scope:New "ScreenGui" {
 		Name = "Repl",
@@ -479,16 +589,12 @@ function Bar:_suppressGameInput(on: boolean)
 	end
 
 	if on then
-		-- character controls
+		-- character controls (this also neutralizes shift-lock/movement while
+		-- typing; DevEnableMouseLock can't be set from a script, so we don't try)
 		pcall(function()
 			local playerModule = require(player:WaitForChild("PlayerScripts"):WaitForChild("PlayerModule")) :: any
 			self._controls = playerModule:GetControls()
 			self._controls:Disable()
-		end)
-		-- shift lock
-		self._restore.mouseLock = player.DevEnableMouseLock
-		pcall(function()
-			player.DevEnableMouseLock = false
 		end)
 		-- backpack hotkey / gui
 		pcall(function()
@@ -500,9 +606,6 @@ function Bar:_suppressGameInput(on: boolean)
 				self._controls:Enable()
 			end)
 		end
-		pcall(function()
-			player.DevEnableMouseLock = self._restore.mouseLock
-		end)
 		pcall(function()
 			StarterGui:SetCoreGuiEnabled(Enum.CoreGuiType.Backpack, true)
 		end)
@@ -527,6 +630,9 @@ end
 function Bar:print(node: Output.Node)
 	local instance = Terminal.render(self._scope, node)
 	instance.Parent = self._outputFrame
+	if self._compact then
+		self._outputFrame.Visible = true -- reveal the compact log on first output
+	end
 	return instance
 end
 

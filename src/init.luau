@@ -110,6 +110,8 @@ function Repl:Start(config: any?)
 		prompt = config.prompt or `{workspace.Name}/kr3ative/repl`,
 		activationKeys = config.activationKeys or pendingActivationKeys,
 		cursorStyle = config.cursorStyle,
+		compact = config.compact,
+		width = config.width,
 		parent = config.parent,
 		submit = function(text)
 			dispatcher:run(text, {
