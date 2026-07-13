@@ -1,5 +1,5 @@
 --- AST node kinds for the Repl shell. The [[Parser]] builds plain tables tagged
---- with a `kind` from `Ast.Kind`; the [[Evaluator]] dispatches on it.
+--- with a `kind` from `Ast.Kind`; the [[Dispatcher]] walks it.
 --- @section Shell
 --- @client
 
