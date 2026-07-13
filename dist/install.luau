@@ -557,6 +557,7 @@ return Command\
 local Output = require(script.Parent.Parent._Utility.Render.Output)\
 local Result = require(script.Parent.Parent._Patterns.Result)\
 local ReturnPool = require(script.Parent.Parent._Utility.Shell.ReturnPool)\
+local EventBus = require(script.Parent.Parent._Utility.EventBus)\
 \
 local Context = {}\
 Context.__index = Context\
@@ -576,6 +577,8 @@ export type Config = {\
 	returnPool: any?,\
 	sink: ((Output.Node) -> ())?,\
 	bridge: Bridge?,\
+	bus: any?, -- a shared EventBus (the two sides of a shared command share one)\
+	net: ((event: string, payload: any) -> any)?, -- cross-realm awaited post\
 }\
 \
 --- Creates a context. Everything is optional; a fresh ReturnPool and an empty\
@@ -590,9 +593,11 @@ function Context.new(config: Config?)\
 		realm = cfg.realm or \"server\",\
 		returnPool = cfg.returnPool or ReturnPool.new(),\
 		output = {} :: { Output.Node }, -- every emitted node, in order\
+		bus = cfg.bus or EventBus.new(), -- shared-command event bus (queued)\
 		_sink = cfg.sink,\
 		_store = {} :: { [string]: any },\
 		_bridge = cfg.bridge,\
+		_net = cfg.net,\
 	}, Context)\
 end\
 \
@@ -725,6 +730,34 @@ end\
 --- Runs another command by name from inside this one.\
 function Context:exec(name: string, ...: any): any\
 	return bridged(self, \"exec\")(name, ...)\
+end\
+\
+-- ── shared commands (post / subscribe) ───────────────────────────────────────\
+\
+--- Listens for `event`. Handlers run for same-realm posts *and* posts from the\
+--- other side (routed in by the network layer); any earlier post is replayed, so\
+--- subscribing late never misses one. A handler's return value answers a `post`.\
+function Context:subscribe(event: string, handler: (...any) -> any)\
+	return self.bus:subscribe(event, handler)\
+end\
+\
+--- Posts `event` to both sides. Returns an awaitable: `:Await()` blocks for a\
+--- guaranteed value — the other realm's response over a RemoteFunction when a\
+--- shared command spans realms, or the local subscriber's response otherwise —\
+--- so there's no race between posting and a listener being ready.\
+function Context:post(event: string, ...: any)\
+	local localReturns = self.bus:post(event, ...)\
+	local net = self._net\
+	local packed = table.pack(...)\
+	return {\
+		--- Blocks for the answer (cross-realm if networked, else local).\
+		Await = function()\
+			if net then\
+				return net(event, table.unpack(packed, 1, packed.n))\
+			end\
+			return localReturns[1]\
+		end,\
+	}\
 end\
 \
 return Context\
@@ -12443,13 +12476,18 @@ function EventBus:once(event: string, handler: (...any) -> ()): Connection\
 end\
 \
 --- Posts to `event`: delivers to current subscribers and retains the payload for\
---- future ones. Both realms may post; posts interleave in call order.\
-function EventBus:post(event: string, ...: any)\
+--- future ones. Both realms may post; posts interleave in call order. Returns the\
+--- list of non-nil handler return values (for request/response over the bus).\
+function EventBus:post(event: string, ...: any): { any }\
+	local returns = {}\
 	local list = self._subs[event]\
 	if list then\
 		for _, connection in table.clone(list) do\
 			if connection.Connected then\
-				connection._handler(...)\
+				local result = connection._handler(...)\
+				if result ~= nil then\
+					table.insert(returns, result)\
+				end\
 			end\
 		end\
 	end\
@@ -12462,6 +12500,7 @@ function EventBus:post(event: string, ...: any)\
 	if #queue > MAX_QUEUE then\
 		table.remove(queue, 1)\
 	end\
+	return returns\
 end\
 \
 --- Clears retained posts (and, with no event, all of them). Subscriptions stay.\

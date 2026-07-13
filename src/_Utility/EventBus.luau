@@ -67,13 +67,18 @@ function EventBus:once(event: string, handler: (...any) -> ()): Connection
 end
 
 --- Posts to `event`: delivers to current subscribers and retains the payload for
---- future ones. Both realms may post; posts interleave in call order.
-function EventBus:post(event: string, ...: any)
+--- future ones. Both realms may post; posts interleave in call order. Returns the
+--- list of non-nil handler return values (for request/response over the bus).
+function EventBus:post(event: string, ...: any): { any }
+	local returns = {}
 	local list = self._subs[event]
 	if list then
 		for _, connection in table.clone(list) do
 			if connection.Connected then
-				connection._handler(...)
+				local result = connection._handler(...)
+				if result ~= nil then
+					table.insert(returns, result)
+				end
 			end
 		end
 	end
@@ -86,6 +91,7 @@ function EventBus:post(event: string, ...: any)
 	if #queue > MAX_QUEUE then
 		table.remove(queue, 1)
 	end
+	return returns
 end
 
 --- Clears retained posts (and, with no event, all of them). Subscriptions stay.

@@ -3,6 +3,7 @@
 local Loader = require("./loader")
 local Context = Loader.get("Context")
 local Output = Loader.get("Output")
+local EventBus = Loader.get("EventBus")
 
 local function eq(a, b, message)
 	if a ~= b then
@@ -114,5 +115,48 @@ return function(t)
 		end)
 		eq(okCall, false, "raised")
 		ok(string.find(tostring(err), "confirm", 1, true) ~= nil, "mentions the method")
+	end)
+
+	-- shared commands: two contexts on one bus stand in for the two sides --------
+
+	test("post reaches a subscriber on the shared bus", function()
+		local bus = EventBus.new()
+		local server = Context.new({ realm = "server", bus = bus })
+		local client = Context.new({ realm = "client", bus = bus })
+		local got
+		server:subscribe("hello", function(name)
+			got = name
+		end)
+		client:post("hello", "Ker")
+		eq(got, "Ker", "the other side received it")
+	end)
+
+	test("post:Await returns the subscriber's response (request/response)", function()
+		local bus = EventBus.new()
+		local server = Context.new({ realm = "server", bus = bus })
+		local client = Context.new({ realm = "client", bus = bus })
+		server:subscribe("sum", function(a, b)
+			return a + b
+		end)
+		eq(client:post("sum", 2, 3):Await(), 5, "awaited the response")
+	end)
+
+	test("a late subscriber still receives an earlier post (queued)", function()
+		local bus = EventBus.new()
+		local a = Context.new({ bus = bus })
+		local b = Context.new({ bus = bus })
+		a:post("boot", "ready")
+		local seen
+		b:subscribe("boot", function(v)
+			seen = v
+		end)
+		eq(seen, "ready", "replayed to the late side")
+	end)
+
+	test("Await uses the network bridge when one is present", function()
+		local ctx = Context.new({ net = function(event, payload)
+			return `{event}:{payload}` -- stand-in for the awaited RemoteFunction
+		end })
+		eq(ctx:post("ping", "x"):Await(), "ping:x", "cross-realm response")
 	end)
 end
