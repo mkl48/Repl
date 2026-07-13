@@ -101,22 +101,32 @@ function Repl:SetActivationKeys(keys: { Enum.KeyCode })\
 end\
 \
 --- Mounts the bar on the client (no-op on the server) and wires it to the\
---- dispatcher. Returns `Repl` for chaining. `config`: `prompt`, `cursorStyle`,\
---- `activationKeys`, `parent`.\
+--- dispatcher. Returns `Repl` for chaining. Options live under a `Terminal`\
+--- table (Cmdr-ish): `Compact`, `Align` (\"Top\"/\"Bottom\"/\"Center\"), `Intellisense`,\
+--- `CursorStyle`, `Width`, `Prompt`, `ActivationKeys`, `Parent` — all optional.\
 function Repl:Start(config: any?)\
 	if RunService:IsServer() or bar then\
 		return Repl\
 	end\
 	config = config or {}\
+	local t = config.Terminal or {}\
+	local function pick(a, b)\
+		if a ~= nil then\
+			return a\
+		end\
+		return b\
+	end\
 	local Bar = require(script._Main.Client.Bar)\
 	bar = Bar.new({\
 		registry = Repl.Registry,\
-		prompt = config.prompt or `{workspace.Name}/kr3ative/repl`,\
-		activationKeys = config.activationKeys or pendingActivationKeys,\
-		cursorStyle = config.cursorStyle,\
-		compact = config.compact,\
-		width = config.width,\
-		parent = config.parent,\
+		prompt = pick(t.Prompt, config.prompt) or `{workspace.Name}/kr3ative/repl`,\
+		activationKeys = pick(t.ActivationKeys, config.activationKeys) or pendingActivationKeys,\
+		cursorStyle = pick(t.CursorStyle, config.cursorStyle),\
+		compact = pick(t.Compact, config.compact),\
+		width = pick(t.Width, config.width),\
+		align = pick(t.Align, config.align),\
+		intellisense = pick(t.Intellisense, config.intellisense),\
+		parent = pick(t.Parent, config.parent),\
 		submit = function(text)\
 			dispatcher:run(text, {\
 				executor = Players.LocalPlayer,\
@@ -785,6 +795,8 @@ export type Config = {\
 	cursorStyle: (\"block\" | \"line\" | \"underline\")?, -- default \"block\"\
 	compact: boolean?, -- single-bar (Cmdr-like) layout instead of the full panel\
 	width: number?, -- compact bar width in px (default 720)\
+	align: (\"Top\" | \"Bottom\" | \"Center\")?, -- where the bar sits (default Bottom)\
+	intellisense: boolean?, -- show the signature hint line (default true)\
 }\
 \
 local FONT = Enum.Font.Code\
@@ -814,6 +826,8 @@ function Bar.new(config: Config)\
 	self._cursorStyle = config.cursorStyle or \"block\"\
 	self._compact = config.compact == true\
 	self._width = config.width or 720\
+	self._align = config.align or \"Bottom\"\
+	self._intellisense = config.intellisense ~= false -- default true\
 	self._suppressed = false\
 \
 	-- ── dev-facing state + events ────────────────────────────────────────────\
@@ -838,6 +852,12 @@ function Bar.new(config: Config)\
 	end)\
 	local ghost = scope:Computed(function(use)\
 		return Completer.ghost(self._registry, use(input))\
+	end)\
+	local hint = scope:Computed(function(use)\
+		if not self._intellisense then\
+			return nil\
+		end\
+		return Completer.hint(self._registry, use(input))\
 	end)\
 	local popoverOpen = scope:Computed(function(use)\
 		if not use(focused) or use(dismissed) then\
@@ -1111,6 +1131,40 @@ function Bar.new(config: Config)\
 		end)\
 	end\
 \
+	-- signature intellisense, right-aligned in the field (e.g. `theme <name>`)\
+	local hintLabel = scope:New \"TextLabel\" {\
+		Name = \"Hint\",\
+		BackgroundTransparency = 1,\
+		AnchorPoint = Vector2.new(1, 0.5),\
+		Position = UDim2.new(1, -4, 0.5, 0),\
+		AutomaticSize = Enum.AutomaticSize.X,\
+		Size = UDim2.new(0, 0, 1, 0),\
+		Font = FONT,\
+		TextSize = 13,\
+		TextXAlignment = Enum.TextXAlignment.Right,\
+		TextYAlignment = Enum.TextYAlignment.Center,\
+		RichText = true,\
+		ZIndex = 1,\
+		Visible = scope:Computed(function(use)\
+			return use(hint) ~= nil\
+		end),\
+		Text = scope:Computed(function(use)\
+			use(Theming.scheme)\
+			local h = use(hint)\
+			if not h then\
+				return \"\"\
+			end\
+			local muted, accent = Theming.hex(\"muted\"), Theming.hex(\"accent\")\
+			local parts = { `<font color=\"{muted}\">{h.name}</font>` }\
+			for i, arg in h.args do\
+				local usage = if arg.optional then `[{arg.name}]` else `<{arg.name}>`\
+				local color = if i == h.activeIndex then accent else muted\
+				table.insert(parts, `<font color=\"{color}\">{usage}</font>`)\
+			end\
+			return table.concat(parts, \" \")\
+		end),\
+	}\
+\
 	textBox = scope:New \"TextBox\" {\
 		Name = \"Input\",\
 		BackgroundTransparency = 1,\
@@ -1183,6 +1237,7 @@ function Bar.new(config: Config)\
 				[Children] = {\
 					scope:New \"UIFlexItem\" { FlexMode = Enum.UIFlexMode.Fill },\
 					ghostLabel,\
+					hintLabel,\
 					cursor,\
 					textBox,\
 				},\
@@ -1191,30 +1246,43 @@ function Bar.new(config: Config)\
 	}\
 \
 	local container\
+	local align = self._align\
 	if self._compact then\
-		-- one Cmdr-like bar; output + popover stack above it, bottom-anchored\
+		-- one Cmdr-like bar; the log + popover stack away from the aligned edge\
 		local bar = scope:New \"Frame\" {\
 			Name = \"Bar\",\
 			BackgroundColor3 = Theming.color(scope, \"bg\"),\
 			BackgroundTransparency = 0.05,\
 			BorderSizePixel = 0,\
 			Size = UDim2.new(1, 0, 0, ROW_HEIGHT + 14),\
-			LayoutOrder = 3,\
 			[Children] = {\
 				scope:New \"UICorner\" { CornerRadius = UDim.new(0, 6) },\
 				scope:New \"UIStroke\" { Color = Theming.color(scope, \"border\"), Thickness = 1 },\
 				inputRow,\
 			},\
 		}\
+		-- when not bottom-aligned the input leads and the popover drops below it\
+		local popoverBelow = align ~= \"Bottom\"\
+		bar.LayoutOrder = if popoverBelow then 1 else 3\
+		popover.LayoutOrder = 2\
+		outputFrame.LayoutOrder = if popoverBelow then 3 else 1\
+		local anchor, vis, hid\
+		if align == \"Top\" then\
+			anchor, vis, hid = Vector2.new(0.5, 0), UDim2.new(0.5, 0, 0, 12), UDim2.new(0.5, 0, -0.6, 0)\
+		elseif align == \"Center\" then\
+			anchor, vis, hid = Vector2.new(0.5, 0.5), UDim2.new(0.5, 0, 0.5, 0), UDim2.new(0.5, 0, -0.6, 0)\
+		else\
+			anchor, vis, hid = Vector2.new(0.5, 1), UDim2.new(0.5, 0, 1, -12), UDim2.new(0.5, 0, 1.6, 0)\
+		end\
 		container = scope:New \"Frame\" {\
 			Name = \"ReplBar\",\
 			BackgroundTransparency = 1,\
-			AnchorPoint = Vector2.new(0.5, 1),\
+			AnchorPoint = anchor,\
 			Size = UDim2.new(0, self._width, 0, 0),\
 			AutomaticSize = Enum.AutomaticSize.Y,\
 			Position = scope:Spring(\
 				scope:Computed(function(use)\
-					return if use(visible) then UDim2.new(0.5, 0, 1, -12) else UDim2.new(0.5, 0, 1.6, 0)\
+					return if use(visible) then vis else hid\
 				end),\
 				28,\
 				1\
@@ -1224,7 +1292,7 @@ function Bar.new(config: Config)\
 					FillDirection = Enum.FillDirection.Vertical,\
 					SortOrder = Enum.SortOrder.LayoutOrder,\
 					HorizontalAlignment = Enum.HorizontalAlignment.Center,\
-					VerticalAlignment = Enum.VerticalAlignment.Bottom,\
+					VerticalAlignment = if popoverBelow then Enum.VerticalAlignment.Top else Enum.VerticalAlignment.Bottom,\
 					Padding = UDim.new(0, 6),\
 				},\
 				outputFrame,\
@@ -1236,15 +1304,24 @@ function Bar.new(config: Config)\
 		inputRow.AnchorPoint = Vector2.new(0, 1)\
 		inputRow.Position = UDim2.new(0, 0, 1, -6)\
 		inputRow.Size = UDim2.new(1, 0, 0, ROW_HEIGHT)\
+		-- the full panel just docks to the chosen edge (internals unchanged)\
+		local anchor, vis, hid\
+		if align == \"Top\" then\
+			anchor, vis, hid = Vector2.new(0, 0), UDim2.new(0, 0, 0, 0), UDim2.new(0, 0, -0.45, 0)\
+		elseif align == \"Center\" then\
+			anchor, vis, hid = Vector2.new(0, 0.5), UDim2.new(0, 0, 0.5, 0), UDim2.new(0, 0, -0.45, 0)\
+		else\
+			anchor, vis, hid = Vector2.new(0, 1), UDim2.new(0, 0, 1, 0), UDim2.new(0, 0, 1.45, 0)\
+		end\
 		container = scope:New \"Frame\" {\
 			Name = \"ReplBar\",\
 			BackgroundColor3 = Theming.color(scope, \"bg\"),\
 			BorderSizePixel = 0,\
 			Size = UDim2.new(1, 0, 0.4, 0),\
-			AnchorPoint = Vector2.new(0, 1),\
+			AnchorPoint = anchor,\
 			Position = scope:Spring(\
 				scope:Computed(function(use)\
-					return if use(visible) then UDim2.new(0, 0, 1, 0) else UDim2.new(0, 0, 1.45, 0)\
+					return if use(visible) then vis else hid\
 				end),\
 				28,\
 				1\
@@ -1283,10 +1360,18 @@ function Bar.new(config: Config)\
 	table.insert(\
 		self._connections,\
 		UserInputService.InputBegan:Connect(function(inputObject)\
-			if not peek(visible) or not textBox:IsFocused() then\
+			if not peek(visible) then\
 				return\
 			end\
 			local key = inputObject.KeyCode\
+			-- Escape closes even after it has just dropped the TextBox's focus\
+			if key == Enum.KeyCode.Escape then\
+				self:hide()\
+				return\
+			end\
+			if not textBox:IsFocused() then\
+				return\
+			end\
 			if key == Enum.KeyCode.Up then\
 				if peek(popoverOpen) then\
 					moveSelection(-1)\
@@ -1307,8 +1392,6 @@ function Bar.new(config: Config)\
 				end\
 			elseif key == Enum.KeyCode.Tab then\
 				acceptSelected()\
-			elseif key == Enum.KeyCode.Escape then\
-				self:hide()\
 			elseif key == Enum.KeyCode.LeftControl or key == Enum.KeyCode.RightControl then\
 				dismissed:set(true)\
 			end\

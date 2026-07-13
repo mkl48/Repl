@@ -60,6 +60,14 @@ Repl.FocusChanged:Connect(function(isFocused)
 	print(`[game] terminal focused: {isFocused} — disable your own binds here`)
 end)
 
--- full panel by default; pass { compact = true } for the single Cmdr-like bar:
+-- full panel at the bottom by default. Everything's customizable:
 Repl:Start()
--- Repl:Start({ compact = true, cursorStyle = "block" })
+-- Repl:Start({
+--     Terminal = {
+--         Compact = true,             -- single Cmdr-like bar
+--         Align = "Center",           -- "Top" | "Bottom" | "Center"
+--         Intellisense = true,        -- the live signature hint
+--         CursorStyle = "block",      -- "block" | "line" | "underline"
+--         Width = 720,
+--     },
+-- })

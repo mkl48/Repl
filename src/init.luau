@@ -97,22 +97,32 @@ function Repl:SetActivationKeys(keys: { Enum.KeyCode })
 end
 
 --- Mounts the bar on the client (no-op on the server) and wires it to the
---- dispatcher. Returns `Repl` for chaining. `config`: `prompt`, `cursorStyle`,
---- `activationKeys`, `parent`.
+--- dispatcher. Returns `Repl` for chaining. Options live under a `Terminal`
+--- table (Cmdr-ish): `Compact`, `Align` ("Top"/"Bottom"/"Center"), `Intellisense`,
+--- `CursorStyle`, `Width`, `Prompt`, `ActivationKeys`, `Parent` — all optional.
 function Repl:Start(config: any?)
 	if RunService:IsServer() or bar then
 		return Repl
 	end
 	config = config or {}
+	local t = config.Terminal or {}
+	local function pick(a, b)
+		if a ~= nil then
+			return a
+		end
+		return b
+	end
 	local Bar = require(script._Main.Client.Bar)
 	bar = Bar.new({
 		registry = Repl.Registry,
-		prompt = config.prompt or `{workspace.Name}/kr3ative/repl`,
-		activationKeys = config.activationKeys or pendingActivationKeys,
-		cursorStyle = config.cursorStyle,
-		compact = config.compact,
-		width = config.width,
-		parent = config.parent,
+		prompt = pick(t.Prompt, config.prompt) or `{workspace.Name}/kr3ative/repl`,
+		activationKeys = pick(t.ActivationKeys, config.activationKeys) or pendingActivationKeys,
+		cursorStyle = pick(t.CursorStyle, config.cursorStyle),
+		compact = pick(t.Compact, config.compact),
+		width = pick(t.Width, config.width),
+		align = pick(t.Align, config.align),
+		intellisense = pick(t.Intellisense, config.intellisense),
+		parent = pick(t.Parent, config.parent),
 		submit = function(text)
 			dispatcher:run(text, {
 				executor = Players.LocalPlayer,
