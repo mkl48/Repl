@@ -149,6 +149,35 @@ renderer draws it. That is what makes ascii/icons/status/multiline all one syste
   are `Computed` off the theme `Value`, so recolor is live; `Spring` drives the
   slide-in, ghost-text fade, and status animation.
 
+## The UI toolkit — `Repl.UI`
+
+Repl also ships a widget toolkit in the same aesthetic, so games build menus,
+panels, and dashboards that match the bar. **Immediate-mode DX over Fusion**: you
+call widgets in a loop (the Iris/ImGui feel), and Fusion drives the retained
+instances underneath — so you get the terse call-it-each-frame API *and* live
+theming + `Spring` animation for free.
+
+```lua
+local UI = Repl.UI
+UI:Window("Server Stats", function()
+    UI:Text(`uptime: {uptime}`)
+    UI:Graph(fpsHistory, { kind = "line" })
+    UI:Table(players, { "Name", "KDR", "Ping" })
+    if UI:Button("restart") then restartServer() end
+end)
+```
+
+- **Chrome:** Window · Menu · MenuBar · Tabs · Tree · Panel · Modal · Popup.
+- **Inputs:** Text · Button · Input · Checkbox · Slider · Combo · Color · Keybind.
+- **Data viz:** Graph (line/area/bar) · Chart (pie) · Table · Sparkline · Progress ·
+  Gauge · Log · Chat.
+- **Terminal glue:** `ctx:window(name, build)` opens one from a command; an Output
+  block can embed a widget (a graph inline in a reply).
+- Everything themed via the same tokens (live recolor), animated via `Spring`.
+
+Structure: `_Main/UI` (the immediate-mode facade + the Fusion renderer) plus
+`_Classes/Window` and the widget modules.
+
 ## Authentication — capability-based
 
 Not role tiers (User < Admin < Owner). **Capabilities**, composed:
