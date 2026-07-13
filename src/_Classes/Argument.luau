@@ -18,6 +18,9 @@ export type Spec = {
 	hasDefault: boolean,
 	default: string?, -- the raw default text, transformed by `type` at dispatch
 	description: string, -- the "# …" trailing note, for intellisense
+	isFlag: boolean, -- a `-x` / `--name` option rather than a positional
+	isBoolean: boolean, -- a presence flag (no value needed)
+	names: { string }, -- flag aliases without dashes (empty for positionals)
 	error: string?,
 }
 
@@ -39,7 +42,80 @@ local function findDefaultEq(rest: string): number?
 	return nil
 end
 
---- Parses a single `"name: TypeExpr = default # description"` entry.
+-- splits "TypeExpr = default" into its two halves (the default may be nil)
+local function splitTypeDefault(rest: string): (string, string?)
+	local eq = findDefaultEq(rest)
+	if eq then
+		return trim(string.sub(rest, 1, eq - 1)), trim(string.sub(rest, eq + 1))
+	end
+	return trim(rest), nil
+end
+
+-- validates a default against its type; returns an error message or nil
+local function defaultError(ty: any, typeExpr: string, default: string?): string?
+	local errParts = (ty :: any).parseErrors
+	if errParts and #errParts > 0 then
+		return `bad type '{typeExpr}': {table.concat(errParts, "; ")}`
+	end
+	if default ~= nil then
+		local value, transformErr = ty.transform(default)
+		if transformErr ~= nil then
+			return `default '{default}' is invalid: {transformErr}`
+		end
+		local ok, why = ty.validate(value)
+		if not ok then
+			return `default '{default}' is invalid: {why}`
+		end
+	end
+	return nil
+end
+
+-- parses a `-x, --name: Type = default` flag/option entry
+local function parseFlag(spec: string, description: string): Spec
+	local colon = string.find(spec, ":", 1, true)
+	local namesPart = if colon then string.sub(spec, 1, colon - 1) else spec
+	local typePart = if colon then string.sub(spec, colon + 1) else ""
+
+	local names = {}
+	for token in string.gmatch(namesPart, "[^,]+") do
+		local n = string.match(trim(token), "^%-%-?([%a_][%w_%-]*)$")
+		if n then
+			table.insert(names, n)
+		end
+	end
+
+	local typeExpr, default = splitTypeDefault(typePart)
+	if typeExpr == "" then
+		typeExpr = "Boolean" -- a bare `--flag` is a presence switch
+	end
+	local isBoolean = typeExpr == "Boolean"
+	if default == nil and isBoolean then
+		default = "false" -- absent boolean flag → false
+	end
+
+	local ty = Types.compile(typeExpr)
+	local err = defaultError(ty, typeExpr, default)
+	if #names == 0 then
+		err = err or `flag '{trim(spec)}' has no valid -x/--name`
+
+	end
+	return {
+		name = names[#names] or "flag", -- the long (last) name is canonical
+		typeExpr = typeExpr,
+		type = ty,
+		optional = true, -- flags are always optional
+		hasDefault = default ~= nil,
+		default = default,
+		description = description,
+		isFlag = true,
+		isBoolean = isBoolean,
+		names = names,
+		error = err,
+	}
+end
+
+--- Parses a single entry: a positional `"name: TypeExpr = default # desc"` or a
+--- flag `"-x, --name: TypeExpr = default # desc"` (a bare `--name` is a boolean).
 function Argument.parse(spec: string): Spec
 	-- pull off a trailing `# description` first (types never contain '#')
 	local description = ""
@@ -48,10 +124,15 @@ function Argument.parse(spec: string): Spec
 		description = trim(string.sub(spec, hashIndex + 1))
 		spec = string.sub(spec, 1, hashIndex - 1)
 	end
+	spec = trim(spec)
 
-	local name, rest = string.match(spec, "^%s*([%a_][%w_]*)%s*:%s*(.+)$")
+	if string.sub(spec, 1, 1) == "-" then
+		return parseFlag(spec, description)
+	end
+
+	local name, rest = string.match(spec, "^([%a_][%w_]*)%s*:%s*(.+)$")
 	if not name then
-		local bare = string.match(spec, "^%s*([%a_][%w_]*)") or trim(spec)
+		local bare = string.match(spec, "^([%a_][%w_]*)") or spec
 		return {
 			name = bare,
 			typeExpr = "",
@@ -60,35 +141,15 @@ function Argument.parse(spec: string): Spec
 			hasDefault = false,
 			default = nil,
 			description = description,
-			error = `expected 'name: Type' but got '{trim(spec)}'`,
+			isFlag = false,
+			isBoolean = false,
+			names = {},
+			error = `expected 'name: Type' but got '{spec}'`,
 		}
 	end
 
-	local typeExpr, default = rest, nil
-	local eq = findDefaultEq(rest)
-	if eq then
-		typeExpr = string.sub(rest, 1, eq - 1)
-		default = trim(string.sub(rest, eq + 1))
-	end
-	typeExpr = trim(typeExpr)
-
+	local typeExpr, default = splitTypeDefault(rest)
 	local ty = Types.compile(typeExpr)
-	local errParts = (ty :: any).parseErrors
-	local err
-	if errParts and #errParts > 0 then
-		err = `bad type '{typeExpr}': {table.concat(errParts, "; ")}`
-	elseif default ~= nil then
-		-- a default must itself pass the type
-		local value, transformErr = ty.transform(default)
-		if transformErr ~= nil then
-			err = `default '{default}' is invalid: {transformErr}`
-		else
-			local ok, why = ty.validate(value)
-			if not ok then
-				err = `default '{default}' is invalid: {why}`
-			end
-		end
-	end
 
 	return {
 		name = name,
@@ -98,7 +159,10 @@ function Argument.parse(spec: string): Spec
 		hasDefault = default ~= nil,
 		default = default,
 		description = description,
-		error = err,
+		isFlag = false,
+		isBoolean = false,
+		names = {},
+		error = defaultError(ty, typeExpr, default),
 	}
 end
 

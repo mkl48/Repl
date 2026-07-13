@@ -109,20 +109,61 @@ function Dispatcher._runSegment(self, tokens, exec, returnPool): any
 		end
 	end
 
-	-- gather raw argument values (tokens after the command name)
+	-- flags start with their declared defaults
+	for _, flag in command.flags do
+		if flag.hasDefault then
+			ctx.flags[flag.name] = (flag.type.transform(flag.default))
+		end
+	end
+
+	-- walk the tokens after the command name, peeling off flags and refs and
+	-- leaving positional values in rawArgs
 	local rawArgs = {}
-	for index = 2, #tokens do
+	local index = 2
+	while index <= #tokens do
 		local token = tokens[index]
-		if token.kind == Kind.SlashSlash then
-			rawArgs[#rawArgs + 1] = { ref = { last = true, path = {} } }
-		elseif token.kind == Kind.Slash then
-			local nameToken = tokens[index + 1]
-			if nameToken and nameToken.kind == Kind.Ident then
-				rawArgs[#rawArgs + 1] = { ref = { last = false, name = nameToken.text, path = {} } }
-				tokens[index + 1] = { kind = "__consumed", text = "", value = nil } -- skip the name next loop
+		local nextToken = tokens[index + 1]
+
+		if token.kind == Kind.Minus and nextToken and nextToken.kind == Kind.Number and not nextToken.spaceBefore then
+			-- a negative number literal (`-5`), not a flag
+			rawArgs[#rawArgs + 1] = { text = "-" .. rawText(nextToken) }
+			index += 2
+		elseif token.kind == Kind.Minus or token.kind == Kind.MinusMinus then
+			if not (nextToken and nextToken.kind == Kind.Ident) then
+				return ctx:err(`expected a flag name after '{token.text}'`)
 			end
-		elseif token.kind ~= "__consumed" then
+			local flag = command.flagByName[nextToken.text]
+			if not flag then
+				return ctx:err(`unknown flag: {token.text}{nextToken.text}`)
+			end
+			if flag.isBoolean then
+				ctx.flags[flag.name] = true
+				index += 2
+			else
+				local valueToken = tokens[index + 2]
+				if not valueToken or valueToken.kind == Kind.EOF then
+					return ctx:err(`flag --{flag.name} needs a value`)
+				end
+				local value, tErr = flag.type.transform(rawText(valueToken))
+				if tErr then
+					return ctx:err(`flag --{flag.name}: {tErr}`)
+				end
+				local okV, why = flag.type.validate(value)
+				if not okV then
+					return ctx:err(`flag --{flag.name}: {why}`)
+				end
+				ctx.flags[flag.name] = value
+				index += 3
+			end
+		elseif token.kind == Kind.SlashSlash then
+			rawArgs[#rawArgs + 1] = { ref = { last = true, path = {} } }
+			index += 1
+		elseif token.kind == Kind.Slash and nextToken and nextToken.kind == Kind.Ident then
+			rawArgs[#rawArgs + 1] = { ref = { last = false, name = nextToken.text, path = {} } }
+			index += 2
+		else
 			rawArgs[#rawArgs + 1] = { text = rawText(token) }
+			index += 1
 		end
 	end
 

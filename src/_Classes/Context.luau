@@ -40,6 +40,7 @@ function Context.new(config: Config?)
 		executor = cfg.executor,
 		rawText = cfg.rawText or "",
 		args = cfg.args or {},
+		flags = {}, -- populated by the dispatcher from -x / --name options
 		realm = cfg.realm or "server",
 		returnPool = cfg.returnPool or ReturnPool.new(),
 		output = {} :: { Output.Node }, -- every emitted node, in order

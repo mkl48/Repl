@@ -26,7 +26,9 @@ export type Command = {
 	aliases: { string },
 	description: string,
 	capabilities: { string },
-	args: { Argument.Spec },
+	args: { Argument.Spec }, -- positional arguments, in order
+	flags: { Argument.Spec }, -- -x / --name options
+	flagByName: { [string]: Argument.Spec }, -- every flag alias → its spec
 	confirm: Confirm?,
 	run: (...any) -> ...any,
 }
@@ -86,13 +88,34 @@ function Command.parse(def: Def): Result
 		fail("Capabilities must be an array of strings")
 	end
 
-	local args: { Argument.Spec } = {}
+	local args: { Argument.Spec } = {} -- positional
+	local flags: { Argument.Spec } = {}
+	local flagByName: { [string]: Argument.Spec } = {}
 	if def.Args ~= nil then
 		if isStringArray(def.Args) then
-			local parsed, argErrors = Argument.parseList(def.Args :: { string })
-			args = parsed
-			for _, message in argErrors do
-				fail(message)
+			local seenOptional = false
+			for index, raw in def.Args :: { string } do
+				local spec = Argument.parse(raw)
+				if spec.error then
+					fail(`arg #{index} ({spec.name}): {spec.error}`)
+				end
+				if spec.isFlag then
+					table.insert(flags, spec)
+					for _, alias in spec.names do
+						if flagByName[alias] then
+							fail(`flag '--{alias}' is declared twice`)
+						end
+						flagByName[alias] = spec
+					end
+				else
+					-- positional ordering: required may not follow optional
+					if spec.optional then
+						seenOptional = true
+					elseif seenOptional then
+						fail(`arg #{index} ({spec.name}): a required argument cannot follow an optional one`)
+					end
+					table.insert(args, spec)
+				end
 			end
 		else
 			fail("Args must be an array of DSL strings")
@@ -114,6 +137,8 @@ function Command.parse(def: Def): Result
 			description = def.Description or "",
 			capabilities = (def.Capabilities :: { string }?) or {},
 			args = args,
+			flags = flags,
+			flagByName = flagByName,
 			confirm = def.Confirm,
 			run = def.Run,
 		},

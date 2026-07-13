@@ -87,9 +87,26 @@ function Completer.complete(registry: RegistryLike, input: string): { Completion
 			})
 		end
 	else
-		-- completing an argument: ask that argument's type
+		-- completing an argument or a flag
 		local command = registry:resolve(words[1])
-		if command then
+		if command and string.sub(currentWord, 1, 1) == "-" then
+			-- suggest flag names
+			for _, flag in command.flags do
+				for _, alias in flag.names do
+					local dashed = (if #alias == 1 then "-" else "--") .. alias
+					if string.sub(dashed, 1, #currentWord) == currentWord then
+						table.insert(out, {
+							text = dashed,
+							kind = "argument",
+							detail = if flag.description ~= "" then flag.description else `--{flag.name}: {flag.typeExpr}`,
+							description = flag.description,
+							replaceStart = replaceStart,
+							replaceEnd = replaceEnd,
+						})
+					end
+				end
+			end
+		elseif command then
 			local arg = command.args[position - 1]
 			if arg then
 				local detail = if arg.description ~= "" then arg.description else `{arg.name}: {arg.typeExpr}`

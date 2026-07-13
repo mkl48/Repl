@@ -39,6 +39,16 @@ local function buildRegistry()
 	reg:register({ Name = "boom", Run = function()
 		error("kaboom")
 	end })
+	reg:register({
+		Name = "deploy",
+		Args = { "target: String", "-f, --force", "--count: Integer = 1" },
+		Run = function(ctx, target)
+			return ctx:ok(`{target} force={tostring(ctx.flags.force)} count={ctx.flags.count}`)
+		end,
+	})
+	reg:register({ Name = "neg", Args = { "n: Number" }, Run = function(ctx, n)
+		return ctx:ok(n)
+	end })
 	return reg
 end
 
@@ -117,6 +127,30 @@ return function(t)
 		end })
 		ok(d:run("add 2 3"):isErr(), "add denied")
 		ok(d:run("ok"):isOk(), "ok allowed")
+	end)
+
+	test("flags default, then override", function()
+		local d = Dispatcher.new(buildRegistry())
+		eq(d:run("deploy prod"):unwrap(), "prod force=false count=1", "defaults")
+		eq(d:run("deploy prod --force"):unwrap(), "prod force=true count=1", "long boolean flag")
+		eq(d:run("deploy prod -f"):unwrap(), "prod force=true count=1", "short alias")
+		eq(d:run("deploy prod --count 5"):unwrap(), "prod force=false count=5", "valued option")
+	end)
+
+	test("a flag may precede the positional", function()
+		local d = Dispatcher.new(buildRegistry())
+		eq(d:run("deploy --force prod"):unwrap(), "prod force=true count=1", "order-independent")
+	end)
+
+	test("a bad flag value errors, an unknown flag errors", function()
+		local d = Dispatcher.new(buildRegistry())
+		ok(d:run("deploy prod --count two"):isErr(), "not an Integer")
+		ok(d:run("deploy prod --bogus"):isErr(), "unknown flag")
+	end)
+
+	test("a negative number is a value, not a flag", function()
+		local d = Dispatcher.new(buildRegistry())
+		eq(d:run("neg -5"):unwrap(), -5, "-5 binds as a number")
 	end)
 
 	test("before/after hooks fire", function()

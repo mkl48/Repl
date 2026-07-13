@@ -38,6 +38,11 @@ local function buildRegistry()
 		Args = { "name: gruvbox | tokyonight | nord # the colorscheme to use" },
 		Run = noop,
 	})
+	reg:register({
+		Name = "deploy",
+		Args = { "target: String", "-f, --force # skip checks", "--count: Integer = 1" },
+		Run = noop,
+	})
 	return reg
 end
 
@@ -157,5 +162,13 @@ return function(t)
 	test("hint is nil for an unknown command", function()
 		local reg = buildRegistry()
 		eq(Completer.hint(reg, "bogus x"), nil, "no hint")
+	end)
+
+	test("a dash suggests the command's flags", function()
+		local reg = buildRegistry()
+		local list = texts(Completer.complete(reg, "deploy -"))
+		ok(has(list, "-f") and has(list, "--force") and has(list, "--count"), "flags offered")
+		eq(#texts(Completer.complete(reg, "deploy --f")), 1, "--f narrows to --force")
+		eq(texts(Completer.complete(reg, "deploy --f"))[1], "--force")
 	end)
 end

@@ -193,6 +193,9 @@ export type Spec = {\
 	hasDefault: boolean,\
 	default: string?, -- the raw default text, transformed by `type` at dispatch\
 	description: string, -- the \"# …\" trailing note, for intellisense\
+	isFlag: boolean, -- a `-x` / `--name` option rather than a positional\
+	isBoolean: boolean, -- a presence flag (no value needed)\
+	names: { string }, -- flag aliases without dashes (empty for positionals)\
 	error: string?,\
 }\
 \
@@ -214,7 +217,80 @@ local function findDefaultEq(rest: string): number?\
 	return nil\
 end\
 \
---- Parses a single `\"name: TypeExpr = default # description\"` entry.\
+-- splits \"TypeExpr = default\" into its two halves (the default may be nil)\
+local function splitTypeDefault(rest: string): (string, string?)\
+	local eq = findDefaultEq(rest)\
+	if eq then\
+		return trim(string.sub(rest, 1, eq - 1)), trim(string.sub(rest, eq + 1))\
+	end\
+	return trim(rest), nil\
+end\
+\
+-- validates a default against its type; returns an error message or nil\
+local function defaultError(ty: any, typeExpr: string, default: string?): string?\
+	local errParts = (ty :: any).parseErrors\
+	if errParts and #errParts > 0 then\
+		return `bad type '{typeExpr}': {table.concat(errParts, \"; \")}`\
+	end\
+	if default ~= nil then\
+		local value, transformErr = ty.transform(default)\
+		if transformErr ~= nil then\
+			return `default '{default}' is invalid: {transformErr}`\
+		end\
+		local ok, why = ty.validate(value)\
+		if not ok then\
+			return `default '{default}' is invalid: {why}`\
+		end\
+	end\
+	return nil\
+end\
+\
+-- parses a `-x, --name: Type = default` flag/option entry\
+local function parseFlag(spec: string, description: string): Spec\
+	local colon = string.find(spec, \":\", 1, true)\
+	local namesPart = if colon then string.sub(spec, 1, colon - 1) else spec\
+	local typePart = if colon then string.sub(spec, colon + 1) else \"\"\
+\
+	local names = {}\
+	for token in string.gmatch(namesPart, \"[^,]+\") do\
+		local n = string.match(trim(token), \"^%-%-?([%a_][%w_%-]*)$\")\
+		if n then\
+			table.insert(names, n)\
+		end\
+	end\
+\
+	local typeExpr, default = splitTypeDefault(typePart)\
+	if typeExpr == \"\" then\
+		typeExpr = \"Boolean\" -- a bare `--flag` is a presence switch\
+	end\
+	local isBoolean = typeExpr == \"Boolean\"\
+	if default == nil and isBoolean then\
+		default = \"false\" -- absent boolean flag → false\
+	end\
+\
+	local ty = Types.compile(typeExpr)\
+	local err = defaultError(ty, typeExpr, default)\
+	if #names == 0 then\
+		err = err or `flag '{trim(spec)}' has no valid -x/--name`\
+\
+	end\
+	return {\
+		name = names[#names] or \"flag\", -- the long (last) name is canonical\
+		typeExpr = typeExpr,\
+		type = ty,\
+		optional = true, -- flags are always optional\
+		hasDefault = default ~= nil,\
+		default = default,\
+		description = description,\
+		isFlag = true,\
+		isBoolean = isBoolean,\
+		names = names,\
+		error = err,\
+	}\
+end\
+\
+--- Parses a single entry: a positional `\"name: TypeExpr = default # desc\"` or a\
+--- flag `\"-x, --name: TypeExpr = default # desc\"` (a bare `--name` is a boolean).\
 function Argument.parse(spec: string): Spec\
 	-- pull off a trailing `# description` first (types never contain '#')\
 	local description = \"\"\
@@ -223,10 +299,15 @@ function Argument.parse(spec: string): Spec\
 		description = trim(string.sub(spec, hashIndex + 1))\
 		spec = string.sub(spec, 1, hashIndex - 1)\
 	end\
+	spec = trim(spec)\
 \
-	local name, rest = string.match(spec, \"^%s*([%a_][%w_]*)%s*:%s*(.+)$\")\
+	if string.sub(spec, 1, 1) == \"-\" then\
+		return parseFlag(spec, description)\
+	end\
+\
+	local name, rest = string.match(spec, \"^([%a_][%w_]*)%s*:%s*(.+)$\")\
 	if not name then\
-		local bare = string.match(spec, \"^%s*([%a_][%w_]*)\") or trim(spec)\
+		local bare = string.match(spec, \"^([%a_][%w_]*)\") or spec\
 		return {\
 			name = bare,\
 			typeExpr = \"\",\
@@ -235,35 +316,15 @@ function Argument.parse(spec: string): Spec\
 			hasDefault = false,\
 			default = nil,\
 			description = description,\
-			error = `expected 'name: Type' but got '{trim(spec)}'`,\
+			isFlag = false,\
+			isBoolean = false,\
+			names = {},\
+			error = `expected 'name: Type' but got '{spec}'`,\
 		}\
 	end\
 \
-	local typeExpr, default = rest, nil\
-	local eq = findDefaultEq(rest)\
-	if eq then\
-		typeExpr = string.sub(rest, 1, eq - 1)\
-		default = trim(string.sub(rest, eq + 1))\
-	end\
-	typeExpr = trim(typeExpr)\
-\
+	local typeExpr, default = splitTypeDefault(rest)\
 	local ty = Types.compile(typeExpr)\
-	local errParts = (ty :: any).parseErrors\
-	local err\
-	if errParts and #errParts > 0 then\
-		err = `bad type '{typeExpr}': {table.concat(errParts, \"; \")}`\
-	elseif default ~= nil then\
-		-- a default must itself pass the type\
-		local value, transformErr = ty.transform(default)\
-		if transformErr ~= nil then\
-			err = `default '{default}' is invalid: {transformErr}`\
-		else\
-			local ok, why = ty.validate(value)\
-			if not ok then\
-				err = `default '{default}' is invalid: {why}`\
-			end\
-		end\
-	end\
 \
 	return {\
 		name = name,\
@@ -273,7 +334,10 @@ function Argument.parse(spec: string): Spec\
 		hasDefault = default ~= nil,\
 		default = default,\
 		description = description,\
-		error = err,\
+		isFlag = false,\
+		isBoolean = false,\
+		names = {},\
+		error = defaultError(ty, typeExpr, default),\
 	}\
 end\
 \
@@ -336,7 +400,9 @@ export type Command = {\
 	aliases: { string },\
 	description: string,\
 	capabilities: { string },\
-	args: { Argument.Spec },\
+	args: { Argument.Spec }, -- positional arguments, in order\
+	flags: { Argument.Spec }, -- -x / --name options\
+	flagByName: { [string]: Argument.Spec }, -- every flag alias → its spec\
 	confirm: Confirm?,\
 	run: (...any) -> ...any,\
 }\
@@ -396,13 +462,34 @@ function Command.parse(def: Def): Result\
 		fail(\"Capabilities must be an array of strings\")\
 	end\
 \
-	local args: { Argument.Spec } = {}\
+	local args: { Argument.Spec } = {} -- positional\
+	local flags: { Argument.Spec } = {}\
+	local flagByName: { [string]: Argument.Spec } = {}\
 	if def.Args ~= nil then\
 		if isStringArray(def.Args) then\
-			local parsed, argErrors = Argument.parseList(def.Args :: { string })\
-			args = parsed\
-			for _, message in argErrors do\
-				fail(message)\
+			local seenOptional = false\
+			for index, raw in def.Args :: { string } do\
+				local spec = Argument.parse(raw)\
+				if spec.error then\
+					fail(`arg #{index} ({spec.name}): {spec.error}`)\
+				end\
+				if spec.isFlag then\
+					table.insert(flags, spec)\
+					for _, alias in spec.names do\
+						if flagByName[alias] then\
+							fail(`flag '--{alias}' is declared twice`)\
+						end\
+						flagByName[alias] = spec\
+					end\
+				else\
+					-- positional ordering: required may not follow optional\
+					if spec.optional then\
+						seenOptional = true\
+					elseif seenOptional then\
+						fail(`arg #{index} ({spec.name}): a required argument cannot follow an optional one`)\
+					end\
+					table.insert(args, spec)\
+				end\
 			end\
 		else\
 			fail(\"Args must be an array of DSL strings\")\
@@ -424,6 +511,8 @@ function Command.parse(def: Def): Result\
 			description = def.Description or \"\",\
 			capabilities = (def.Capabilities :: { string }?) or {},\
 			args = args,\
+			flags = flags,\
+			flagByName = flagByName,\
 			confirm = def.Confirm,\
 			run = def.Run,\
 		},\
@@ -484,6 +573,7 @@ function Context.new(config: Config?)\
 		executor = cfg.executor,\
 		rawText = cfg.rawText or \"\",\
 		args = cfg.args or {},\
+		flags = {}, -- populated by the dispatcher from -x / --name options\
 		realm = cfg.realm or \"server\",\
 		returnPool = cfg.returnPool or ReturnPool.new(),\
 		output = {} :: { Output.Node }, -- every emitted node, in order\
@@ -1445,9 +1535,26 @@ function Completer.complete(registry: RegistryLike, input: string): { Completion
 			})\
 		end\
 	else\
-		-- completing an argument: ask that argument's type\
+		-- completing an argument or a flag\
 		local command = registry:resolve(words[1])\
-		if command then\
+		if command and string.sub(currentWord, 1, 1) == \"-\" then\
+			-- suggest flag names\
+			for _, flag in command.flags do\
+				for _, alias in flag.names do\
+					local dashed = (if #alias == 1 then \"-\" else \"--\") .. alias\
+					if string.sub(dashed, 1, #currentWord) == currentWord then\
+						table.insert(out, {\
+							text = dashed,\
+							kind = \"argument\",\
+							detail = if flag.description ~= \"\" then flag.description else `--{flag.name}: {flag.typeExpr}`,\
+							description = flag.description,\
+							replaceStart = replaceStart,\
+							replaceEnd = replaceEnd,\
+						})\
+					end\
+				end\
+			end\
+		elseif command then\
 			local arg = command.args[position - 1]\
 			if arg then\
 				local detail = if arg.description ~= \"\" then arg.description else `{arg.name}: {arg.typeExpr}`\
@@ -1700,20 +1807,61 @@ function Dispatcher._runSegment(self, tokens, exec, returnPool): any\
 		end\
 	end\
 \
-	-- gather raw argument values (tokens after the command name)\
+	-- flags start with their declared defaults\
+	for _, flag in command.flags do\
+		if flag.hasDefault then\
+			ctx.flags[flag.name] = (flag.type.transform(flag.default))\
+		end\
+	end\
+\
+	-- walk the tokens after the command name, peeling off flags and refs and\
+	-- leaving positional values in rawArgs\
 	local rawArgs = {}\
-	for index = 2, #tokens do\
+	local index = 2\
+	while index <= #tokens do\
 		local token = tokens[index]\
-		if token.kind == Kind.SlashSlash then\
-			rawArgs[#rawArgs + 1] = { ref = { last = true, path = {} } }\
-		elseif token.kind == Kind.Slash then\
-			local nameToken = tokens[index + 1]\
-			if nameToken and nameToken.kind == Kind.Ident then\
-				rawArgs[#rawArgs + 1] = { ref = { last = false, name = nameToken.text, path = {} } }\
-				tokens[index + 1] = { kind = \"__consumed\", text = \"\", value = nil } -- skip the name next loop\
+		local nextToken = tokens[index + 1]\
+\
+		if token.kind == Kind.Minus and nextToken and nextToken.kind == Kind.Number and not nextToken.spaceBefore then\
+			-- a negative number literal (`-5`), not a flag\
+			rawArgs[#rawArgs + 1] = { text = \"-\" .. rawText(nextToken) }\
+			index += 2\
+		elseif token.kind == Kind.Minus or token.kind == Kind.MinusMinus then\
+			if not (nextToken and nextToken.kind == Kind.Ident) then\
+				return ctx:err(`expected a flag name after '{token.text}'`)\
 			end\
-		elseif token.kind ~= \"__consumed\" then\
+			local flag = command.flagByName[nextToken.text]\
+			if not flag then\
+				return ctx:err(`unknown flag: {token.text}{nextToken.text}`)\
+			end\
+			if flag.isBoolean then\
+				ctx.flags[flag.name] = true\
+				index += 2\
+			else\
+				local valueToken = tokens[index + 2]\
+				if not valueToken or valueToken.kind == Kind.EOF then\
+					return ctx:err(`flag --{flag.name} needs a value`)\
+				end\
+				local value, tErr = flag.type.transform(rawText(valueToken))\
+				if tErr then\
+					return ctx:err(`flag --{flag.name}: {tErr}`)\
+				end\
+				local okV, why = flag.type.validate(value)\
+				if not okV then\
+					return ctx:err(`flag --{flag.name}: {why}`)\
+				end\
+				ctx.flags[flag.name] = value\
+				index += 3\
+			end\
+		elseif token.kind == Kind.SlashSlash then\
+			rawArgs[#rawArgs + 1] = { ref = { last = true, path = {} } }\
+			index += 1\
+		elseif token.kind == Kind.Slash and nextToken and nextToken.kind == Kind.Ident then\
+			rawArgs[#rawArgs + 1] = { ref = { last = false, name = nextToken.text, path = {} } }\
+			index += 2\
+		else\
 			rawArgs[#rawArgs + 1] = { text = rawText(token) }\
+			index += 1\
 		end\
 	end\
 \
