@@ -136,6 +136,37 @@ ctx:return(...)                   -- push to the shell return pool (//)
 ctx.executor · ctx.rawText · ctx.args · ctx.realm · ctx:store(name)
 ```
 
+## Confirmation & prompts
+
+A command can pause and ask the executor mid-run — the terminal blocks on it (in
+a chain `a && b`, `b`'s confirm holds the chain until answered).
+
+```lua
+-- imperative, inside a handler
+if not ctx:confirm("Delete 3 saves? This can't be undone"):await() then
+    return ctx:abort("cancelled")
+end
+```
+
+- `ctx:confirm(q)` → prints `q  [y/n]`, waits for **y / n** (or Yes/No buttons on
+  touch/console); resolves a `Reaction<boolean>`.
+- `ctx:prompt(q)` → an inline text input; resolves the string.
+- `ctx:choose(q, options)` → a pick list (↑/↓ or click); resolves the choice.
+
+Declarative, for dangerous commands — the framework asks **before** `Run`:
+
+```lua
+return {
+    Name = "shutdown",
+    Confirm = "Shut down the server for everyone?",   -- auto y/n before Run
+    -- or Confirm = { type = "phrase", phrase = "SHUTDOWN" }  -- must type it exactly
+}
+```
+
+Extra-destructive actions can require the executor to **type a phrase** (the
+command name, the server name, `yes`) rather than a single key — the GitHub
+"type the repo name to delete" pattern.
+
 ## Terminal rendering
 
 **Output is structured, not strings.** A command builds an Output tree; a reusable
