@@ -271,6 +271,190 @@ end\
 \
 return Command\
 "},
+{"Repl/_Classes/Context","ModuleScript","--- The **Context** (`ctx`) handed to every command handler: it is how a command\
+--- talks back to the terminal. Output methods emit structured [[Output]] nodes;\
+--- `ok`/`err`/`abort` both report *and* return a [[Result]] with the right exit\
+--- code; `returns` records a value in the [[ReturnPool]] for later `/references`;\
+--- `store` is a per-session scratch space. Interactive calls (`confirm`, `prompt`,\
+--- `choose`, `exec`) delegate to an injected bridge — headless in tests, a real\
+--- client round-trip once Network is in.\
+--- @section Context\
+--- @client\
+\
+local Output = require(script.Parent.Parent._Utility.Render.Output)\
+local Result = require(script.Parent.Parent._Patterns.Result)\
+local ReturnPool = require(script.Parent.Parent._Utility.Shell.ReturnPool)\
+\
+local Context = {}\
+Context.__index = Context\
+\
+export type Bridge = {\
+	confirm: ((message: string) -> boolean)?,\
+	prompt: ((message: string, default: string?) -> string?)?,\
+	choose: ((message: string, options: { string }) -> string?)?,\
+	exec: ((name: string, ...any) -> any)?,\
+}\
+\
+export type Config = {\
+	executor: any?,\
+	rawText: string?,\
+	args: { any }?,\
+	realm: string?,\
+	returnPool: any?,\
+	sink: ((Output.Node) -> ())?,\
+	bridge: Bridge?,\
+}\
+\
+--- Creates a context. Everything is optional; a fresh ReturnPool and an empty\
+--- store are provided if you don't pass them.\
+function Context.new(config: Config?)\
+	local cfg = config or {}\
+	return setmetatable({\
+		executor = cfg.executor,\
+		rawText = cfg.rawText or \"\",\
+		args = cfg.args or {},\
+		realm = cfg.realm or \"server\",\
+		returnPool = cfg.returnPool or ReturnPool.new(),\
+		output = {} :: { Output.Node }, -- every emitted node, in order\
+		_sink = cfg.sink,\
+		_store = {} :: { [string]: any },\
+		_bridge = cfg.bridge,\
+	}, Context)\
+end\
+\
+--- Emits a node: records it and forwards it to the sink (the live terminal).\
+function Context:emit(node: Output.Node): Output.Node\
+	table.insert(self.output, node)\
+	if self._sink then\
+		self._sink(node)\
+	end\
+	return node\
+end\
+\
+-- ── output ──────────────────────────────────────────────────────────────────\
+\
+--- A neutral reply line.\
+function Context:reply(text: string)\
+	return self:emit(Output.plain(text))\
+end\
+function Context:success(text: string)\
+	return self:emit(Output.success(text))\
+end\
+function Context:error(text: string)\
+	return self:emit(Output.error(text))\
+end\
+function Context:warn(text: string)\
+	return self:emit(Output.warn(text))\
+end\
+function Context:info(text: string)\
+	return self:emit(Output.info(text))\
+end\
+function Context:message(text: string)\
+	return self:emit(Output.message(text))\
+end\
+\
+--- A line in an arbitrary theme color token.\
+function Context:custom(color: string, text: string)\
+	return self:emit(Output.line(\"plain\", { Output.segment(text, { color = color }) }))\
+end\
+\
+--- A line prefixed with a Lucide icon.\
+function Context:icon(name: string, text: string)\
+	return self:emit(Output.line(\"plain\", { Output.segment(text, { icon = name }) }))\
+end\
+\
+--- An aligned table block from rows of cells.\
+function Context:table(rows: { { string } })\
+	return self:emit(Output.table(rows))\
+end\
+\
+--- A multi-line ascii block (split on newlines).\
+function Context:ascii(text: string)\
+	local lines: { Output.Line } = {}\
+	for line in string.gmatch(text .. \"\\n\", \"(.-)\\n\") do\
+		table.insert(lines, Output.plain(line))\
+	end\
+	return self:emit(Output.block(\"ascii\", lines))\
+end\
+\
+-- ── outcomes (report + return a Result) ──────────────────────────────────────\
+\
+--- Reports success (if a message is given) and returns an ok [[Result]].\
+function Context:ok(message: any?): Result.Result\
+	if message ~= nil then\
+		self:success(tostring(message))\
+	end\
+	return Result.ok(message)\
+end\
+\
+--- Reports an error and returns an err [[Result]] (exit code defaults to 1).\
+function Context:err(message: string?, code: number?): Result.Result\
+	if message ~= nil then\
+		self:error(tostring(message))\
+	end\
+	return Result.err(message or \"error\", code)\
+end\
+\
+--- Reports a cancellation and returns an abort [[Result]] (exit code 130).\
+function Context:abort(reason: string?): Result.Result\
+	if reason ~= nil then\
+		self:message(tostring(reason))\
+	end\
+	return Result.abort(reason)\
+end\
+\
+-- ── return pool ───────────────────────────────────────────────────────────--\
+\
+--- Records `value` in the return pool so later `/references` can read it back.\
+function Context:returns(value: any, valueType: string?, label: string?): any\
+	self.returnPool:push(value, valueType, label)\
+	return value\
+end\
+\
+-- ── session store ─────────────────────────────────────────────────────────--\
+\
+--- `store(name)` reads; `store(name, value)` writes (and returns the value).\
+function Context:store(name: string, ...: any): any\
+	if select(\"#\", ...) > 0 then\
+		local value = ...\
+		self._store[name] = value\
+		return value\
+	end\
+	return self._store[name]\
+end\
+\
+-- ── interactive (delegated to the bridge) ────────────────────────────────────\
+\
+local function bridged(self, method: string)\
+	local bridge = self._bridge\
+	if not bridge or not bridge[method] then\
+		error(`ctx:{method} is not available in this context`, 3)\
+	end\
+	return bridge[method]\
+end\
+\
+--- Asks a yes/no question; blocks the terminal until answered.\
+function Context:confirm(message: string): boolean\
+	return bridged(self, \"confirm\")(message)\
+end\
+\
+--- Prompts for a line of text (optionally with a default).\
+function Context:prompt(message: string, default: string?): string?\
+	return bridged(self, \"prompt\")(message, default)\
+end\
+\
+--- Presents a choice between `options`.\
+function Context:choose(message: string, options: { string }): string?\
+	return bridged(self, \"choose\")(message, options)\
+end\
+\
+--- Runs another command by name from inside this one.\
+function Context:exec(name: string, ...: any): any\
+	return bridged(self, \"exec\")(name, ...)\
+end\
+\
+return Context\
+"},
 {"Repl/_Commands","Folder",nil},
 {"Repl/_Commands/_Client","Folder",nil},
 {"Repl/_Commands/_Server","Folder",nil},
@@ -1247,6 +1431,160 @@ function Fuzzy.filter(query: string, candidates: { string }): { Match }\
 end\
 \
 return Fuzzy\
+"},
+{"Repl/_Utility/Render","ModuleScript","--- Rendering. The headless [[Output]] model (Segment/Line/Block + a plain-text\
+--- flattener) lives here; the Fusion terminal renderer that turns those nodes\
+--- into themed, animated instances joins it later (Studio-only).\
+--- @section Render\
+--- @client\
+\
+local Render = {}\
+\
+Render.Output = require(script.Output)\
+\
+return Render\
+"},
+{"Repl/_Utility/Render/Output","ModuleScript","--- The **structured output model**. Commands never print strings — they emit\
+--- `Segment`s (styled text runs), grouped into `Line`s, optionally grouped into\
+--- a `Block` (a table, an ascii art, a status panel). Colors are *semantic\
+--- tokens* (`\"success\"`, `\"error\"`, `\"accent\"`, `\"muted\"`…), not `Color3`, so the\
+--- same output recolors live when the theme changes and stays fully headless.\
+--- `toText` flattens any node to plain text for logs and no-UI fallbacks.\
+--- @section Render\
+--- @client\
+\
+local Output = {}\
+\
+--- A styled run of text. `color` is a semantic token resolved by the theme.\
+export type Segment = {\
+	text: string,\
+	color: string?,\
+	bold: boolean?,\
+	italic: boolean?,\
+	underline: boolean?,\
+	icon: string?, -- a Lucide icon name rendered before the text\
+}\
+\
+--- A row of segments. `kind` gives it semantic meaning (and a default color):\
+--- \"plain\" | \"success\" | \"error\" | \"warn\" | \"info\" | \"message\".\
+export type Line = {\
+	class: \"Line\",\
+	kind: string,\
+	segments: { Segment },\
+}\
+\
+--- A group of lines with a structural `kind`: \"block\" | \"table\" | \"ascii\" | \"status\".\
+export type Block = {\
+	class: \"Block\",\
+	kind: string,\
+	lines: { Line },\
+}\
+\
+export type Node = Line | Block\
+\
+--- Builds a styled segment. `style` may set color/bold/italic/underline/icon.\
+function Output.segment(text: string, style: { [string]: any }?): Segment\
+	local segment: Segment = { text = text }\
+	if style then\
+		segment.color = style.color\
+		segment.bold = style.bold\
+		segment.italic = style.italic\
+		segment.underline = style.underline\
+		segment.icon = style.icon\
+	end\
+	return segment\
+end\
+\
+-- coerce a string, a segment, or a list of segments into a segment list\
+local function toSegments(content: string | Segment | { Segment }): { Segment }\
+	if type(content) == \"string\" then\
+		return { Output.segment(content) }\
+	elseif (content :: any).text ~= nil then\
+		return { content :: Segment } -- a lone segment\
+	end\
+	return content :: { Segment }\
+end\
+\
+--- Builds a line of the given `kind` from a string, a segment, or segments.\
+function Output.line(kind: string, content: string | Segment | { Segment }): Line\
+	return { class = \"Line\", kind = kind, segments = toSegments(content) }\
+end\
+\
+-- semantic one-liners: each tags the line kind and colors its text to match\
+local function semantic(kind: string, color: string)\
+	return function(text: string): Line\
+		return { class = \"Line\", kind = kind, segments = { Output.segment(text, { color = color }) } }\
+	end\
+end\
+\
+--- A neutral line.\
+Output.plain = semantic(\"plain\", \"text\")\
+--- A success line (green token).\
+Output.success = semantic(\"success\", \"success\")\
+--- An error line (red token).\
+Output.error = semantic(\"error\", \"error\")\
+--- A warning line (yellow token).\
+Output.warn = semantic(\"warn\", \"warn\")\
+--- An informational line (accent token).\
+Output.info = semantic(\"info\", \"accent\")\
+--- A muted, secondary line.\
+Output.message = semantic(\"message\", \"muted\")\
+\
+--- Groups lines into a block of the given structural `kind`.\
+function Output.block(kind: string, lines: { Line }): Block\
+	return { class = \"Block\", kind = kind, lines = lines }\
+end\
+\
+--- Builds a simple text table block from rows of cells (each cell becomes a\
+--- muted-separated segment run; columns are padded to align).\
+function Output.table(rows: { { string } }): Block\
+	-- compute column widths\
+	local widths: { number } = {}\
+	for _, row in rows do\
+		for col, cell in row do\
+			widths[col] = math.max(widths[col] or 0, #cell)\
+		end\
+	end\
+	local lines: { Line } = {}\
+	for _, row in rows do\
+		local segments: { Segment } = {}\
+		for col, cell in row do\
+			local padded = cell .. string.rep(\" \", (widths[col] or 0) - #cell)\
+			table.insert(segments, Output.segment(padded))\
+			if col < #row then\
+				table.insert(segments, Output.segment(\"  \", { color = \"muted\" }))\
+			end\
+		end\
+		table.insert(lines, { class = \"Line\", kind = \"plain\", segments = segments })\
+	end\
+	return Output.block(\"table\", lines)\
+end\
+\
+--- Flattens a line or block to plain text (styling dropped), joining a block's\
+--- lines with newlines. Icons render as `[name] `.\
+function Output.toText(node: Node): string\
+	local function lineText(line: Line): string\
+		local parts = {}\
+		for _, seg in line.segments do\
+			if seg.icon then\
+				table.insert(parts, `[{seg.icon}] `)\
+			end\
+			table.insert(parts, seg.text)\
+		end\
+		return table.concat(parts)\
+	end\
+\
+	if node.class == \"Line\" then\
+		return lineText(node :: Line)\
+	end\
+	local out = {}\
+	for _, line in (node :: Block).lines do\
+		table.insert(out, lineText(line))\
+	end\
+	return table.concat(out, \"\\n\")\
+end\
+\
+return Output\
 "},
 {"Repl/_Utility/Shell","ModuleScript","--- The shell front end: source → tokens → AST. Re-exports the stages\
 --- ([[Lexer]], [[Parser]], [[Ast]], [[Token]]) and the two entry points.\
