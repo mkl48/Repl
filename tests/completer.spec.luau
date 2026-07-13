@@ -32,6 +32,12 @@ local function buildRegistry()
 	reg:register({ Name = "kick", Description = "Kick a player.", Run = noop })
 	reg:register({ Name = "announce", Description = "Broadcast.", Run = noop })
 	reg:register({ Name = "count", Args = { "n: 2 < Integer < 6" }, Run = noop })
+	reg:register({
+		Name = "theme",
+		Description = "Switch the colorscheme.",
+		Args = { "name: gruvbox | tokyonight | nord # the colorscheme to use" },
+		Run = noop,
+	})
 	return reg
 end
 
@@ -115,5 +121,41 @@ return function(t)
 		local reg = buildRegistry()
 		eq(Completer.ghost(reg, "anno"), "unce", "announce - anno")
 		eq(Completer.ghost(reg, "kill t"), "rue", "true - t")
+	end)
+
+	test("a literal-union argument suggests its values", function()
+		local reg = buildRegistry()
+		local list = texts(Completer.complete(reg, "theme "))
+		eq(#list, 3, "gruvbox / tokyonight / nord")
+		ok(has(list, "gruvbox") and has(list, "nord"), "literals suggested")
+		eq(#texts(Completer.complete(reg, "theme gr")), 1, "prefix narrows to gruvbox")
+	end)
+
+	test("a command completion's detail is its signature", function()
+		local reg = buildRegistry()
+		local list = Completer.complete(reg, "theme")
+		eq(list[1].detail, "theme <name>", "usage signature")
+		eq(list[1].description, "Switch the colorscheme.", "description carried too")
+	end)
+
+	test("an argument completion shows the arg description", function()
+		local reg = buildRegistry()
+		local list = Completer.complete(reg, "theme ")
+		eq(list[1].detail, "the colorscheme to use", "the '# …' note")
+	end)
+
+	test("hint reports the active argument", function()
+		local reg = buildRegistry()
+		local onName = Completer.hint(reg, "theme")
+		eq(onName.activeIndex, 0, "still on the command name")
+		eq(onName.signature, "theme <name>", "signature")
+		local onArg = Completer.hint(reg, "theme ")
+		eq(onArg.activeIndex, 1, "on the first argument")
+		eq(onArg.args[1].description, "the colorscheme to use", "arg description available")
+	end)
+
+	test("hint is nil for an unknown command", function()
+		local reg = buildRegistry()
+		eq(Completer.hint(reg, "bogus x"), nil, "no hint")
 	end)
 end

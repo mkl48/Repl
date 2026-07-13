@@ -17,6 +17,7 @@ export type Spec = {
 	optional: boolean,
 	hasDefault: boolean,
 	default: string?, -- the raw default text, transformed by `type` at dispatch
+	description: string, -- the "# …" trailing note, for intellisense
 	error: string?,
 }
 
@@ -38,8 +39,16 @@ local function findDefaultEq(rest: string): number?
 	return nil
 end
 
---- Parses a single `"name: TypeExpr = default"` entry.
+--- Parses a single `"name: TypeExpr = default # description"` entry.
 function Argument.parse(spec: string): Spec
+	-- pull off a trailing `# description` first (types never contain '#')
+	local description = ""
+	local hashIndex = string.find(spec, "#", 1, true)
+	if hashIndex then
+		description = trim(string.sub(spec, hashIndex + 1))
+		spec = string.sub(spec, 1, hashIndex - 1)
+	end
+
 	local name, rest = string.match(spec, "^%s*([%a_][%w_]*)%s*:%s*(.+)$")
 	if not name then
 		local bare = string.match(spec, "^%s*([%a_][%w_]*)") or trim(spec)
@@ -50,6 +59,7 @@ function Argument.parse(spec: string): Spec
 			optional = false,
 			hasDefault = false,
 			default = nil,
+			description = description,
 			error = `expected 'name: Type' but got '{trim(spec)}'`,
 		}
 	end
@@ -87,8 +97,17 @@ function Argument.parse(spec: string): Spec
 		optional = ty.optional == true or default ~= nil,
 		hasDefault = default ~= nil,
 		default = default,
+		description = description,
 		error = err,
 	}
+end
+
+--- A usage token for one spec: `<name>` (required) or `[name]` (optional).
+function Argument.usage(spec: Spec): string
+	if spec.optional then
+		return `[{spec.name}]`
+	end
+	return `<{spec.name}>`
 end
 
 --- Parses a whole `Args` list, collecting per-entry errors plus one structural

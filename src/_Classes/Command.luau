@@ -121,4 +121,13 @@ function Command.parse(def: Def): Result
 	}
 end
 
+--- A usage signature: `name <required> [optional]`.
+function Command.signature(command: Command): string
+	local parts = { command.name }
+	for _, arg in command.args do
+		table.insert(parts, Argument.usage(arg))
+	end
+	return table.concat(parts, " ")
+end
+
 return Command

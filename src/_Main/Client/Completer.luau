@@ -8,6 +8,7 @@
 --- @client
 
 local Fuzzy = require(script.Parent.Parent.Parent._Utility.Fuzzy)
+local Command = require(script.Parent.Parent.Parent._Classes.Command)
 
 local Completer = {}
 
@@ -16,9 +17,19 @@ local Completer = {}
 export type Completion = {
 	text: string,
 	kind: "command" | "argument",
-	detail: string, -- a description / type hint shown beside the entry
+	detail: string, -- a usage/type hint shown beside the entry
+	description: string, -- a longer description, for the intellisense line
 	replaceStart: number,
 	replaceEnd: number,
+}
+
+--- Signature intellisense for the command currently being typed.
+export type Hint = {
+	name: string,
+	signature: string, -- "name <a> [b]"
+	description: string,
+	args: { any }, -- the command's arg specs (name/typeExpr/optional/description)
+	activeIndex: number, -- which arg the cursor is on (0 = still on the name)
 }
 
 -- the registry surface the completer needs (kept structural so tests can pass a
@@ -69,7 +80,8 @@ function Completer.complete(registry: RegistryLike, input: string): { Completion
 			table.insert(out, {
 				text = match.value,
 				kind = "command",
-				detail = command and command.description or "",
+				detail = if command then Command.signature(command) else "",
+				description = command and command.description or "",
 				replaceStart = replaceStart,
 				replaceEnd = replaceEnd,
 			})
@@ -80,11 +92,13 @@ function Completer.complete(registry: RegistryLike, input: string): { Completion
 		if command then
 			local arg = command.args[position - 1]
 			if arg then
+				local detail = if arg.description ~= "" then arg.description else `{arg.name}: {arg.typeExpr}`
 				for _, suggestion in arg.type.autocomplete(currentWord) do
 					table.insert(out, {
 						text = suggestion,
 						kind = "argument",
-						detail = `{arg.name}: {arg.typeExpr}`,
+						detail = detail,
+						description = arg.description or "",
 						replaceStart = replaceStart,
 						replaceEnd = replaceEnd,
 					})
@@ -94,6 +108,28 @@ function Completer.complete(registry: RegistryLike, input: string): { Completion
 	end
 
 	return out
+end
+
+--- Signature intellisense for `input`: the resolved command, its usage, and
+--- which argument the cursor is on (0 while still typing the name). Returns nil
+--- when the first word isn't a known command.
+function Completer.hint(registry: RegistryLike, input: string): Hint?
+	local words, endsWithSpace = splitWords(input)
+	if #words == 0 then
+		return nil
+	end
+	local command = registry:resolve(words[1])
+	if not command then
+		return nil
+	end
+	local activeIndex = if endsWithSpace then #words else #words - 1 -- 0 = on the name
+	return {
+		name = command.name,
+		signature = Command.signature(command),
+		description = command.description,
+		args = command.args,
+		activeIndex = activeIndex,
+	}
 end
 
 --- The ghost-text completion of `input`: the remaining characters of the single

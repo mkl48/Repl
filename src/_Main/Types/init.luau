@@ -146,10 +146,35 @@ local function unknownType(name: string): Type
 	}
 end
 
+-- a literal string value: `name: gruvbox | tokyonight` is a union of these, i.e.
+-- an enum of allowed words that also autocompletes itself
+local function literalType(value: string): Type
+	return {
+		name = value,
+		transform = function(raw)
+			if raw == value then
+				return value
+			end
+			return nil, `expected '{value}'`
+		end,
+		validate = function(v)
+			return v == value, if v == value then nil else `expected '{value}'`
+		end,
+		autocomplete = function(prefix)
+			if string.sub(value, 1, #prefix) == prefix then
+				return { value }
+			end
+			return {}
+		end,
+	}
+end
+
 local function compileName(node: any): Type
 	local def = registry[node.name]
 	if not def then
-		return unknownType(node.name)
+		-- an unregistered name is a literal value, so `gruvbox | tokyonight` and
+		-- `red | green | blue` work as enums with no type registration
+		return literalType(node.name)
 	end
 	return {
 		name = def.name,

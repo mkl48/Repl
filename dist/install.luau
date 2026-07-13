@@ -192,6 +192,7 @@ export type Spec = {\
 	optional: boolean,\
 	hasDefault: boolean,\
 	default: string?, -- the raw default text, transformed by `type` at dispatch\
+	description: string, -- the \"# …\" trailing note, for intellisense\
 	error: string?,\
 }\
 \
@@ -213,8 +214,16 @@ local function findDefaultEq(rest: string): number?\
 	return nil\
 end\
 \
---- Parses a single `\"name: TypeExpr = default\"` entry.\
+--- Parses a single `\"name: TypeExpr = default # description\"` entry.\
 function Argument.parse(spec: string): Spec\
+	-- pull off a trailing `# description` first (types never contain '#')\
+	local description = \"\"\
+	local hashIndex = string.find(spec, \"#\", 1, true)\
+	if hashIndex then\
+		description = trim(string.sub(spec, hashIndex + 1))\
+		spec = string.sub(spec, 1, hashIndex - 1)\
+	end\
+\
 	local name, rest = string.match(spec, \"^%s*([%a_][%w_]*)%s*:%s*(.+)$\")\
 	if not name then\
 		local bare = string.match(spec, \"^%s*([%a_][%w_]*)\") or trim(spec)\
@@ -225,6 +234,7 @@ function Argument.parse(spec: string): Spec\
 			optional = false,\
 			hasDefault = false,\
 			default = nil,\
+			description = description,\
 			error = `expected 'name: Type' but got '{trim(spec)}'`,\
 		}\
 	end\
@@ -262,8 +272,17 @@ function Argument.parse(spec: string): Spec\
 		optional = ty.optional == true or default ~= nil,\
 		hasDefault = default ~= nil,\
 		default = default,\
+		description = description,\
 		error = err,\
 	}\
+end\
+\
+--- A usage token for one spec: `<name>` (required) or `[name]` (optional).\
+function Argument.usage(spec: Spec): string\
+	if spec.optional then\
+		return `[{spec.name}]`\
+	end\
+	return `<{spec.name}>`\
 end\
 \
 --- Parses a whole `Args` list, collecting per-entry errors plus one structural\
@@ -410,6 +429,15 @@ function Command.parse(def: Def): Result\
 		},\
 		errors = errors,\
 	}\
+end\
+\
+--- A usage signature: `name <required> [optional]`.\
+function Command.signature(command: Command): string\
+	local parts = { command.name }\
+	for _, arg in command.args do\
+		table.insert(parts, Argument.usage(arg))\
+	end\
+	return table.concat(parts, \" \")\
 end\
 \
 return Command\
@@ -1338,6 +1366,7 @@ return Bar\
 --- @client\
 \
 local Fuzzy = require(script.Parent.Parent.Parent._Utility.Fuzzy)\
+local Command = require(script.Parent.Parent.Parent._Classes.Command)\
 \
 local Completer = {}\
 \
@@ -1346,9 +1375,19 @@ local Completer = {}\
 export type Completion = {\
 	text: string,\
 	kind: \"command\" | \"argument\",\
-	detail: string, -- a description / type hint shown beside the entry\
+	detail: string, -- a usage/type hint shown beside the entry\
+	description: string, -- a longer description, for the intellisense line\
 	replaceStart: number,\
 	replaceEnd: number,\
+}\
+\
+--- Signature intellisense for the command currently being typed.\
+export type Hint = {\
+	name: string,\
+	signature: string, -- \"name <a> [b]\"\
+	description: string,\
+	args: { any }, -- the command's arg specs (name/typeExpr/optional/description)\
+	activeIndex: number, -- which arg the cursor is on (0 = still on the name)\
 }\
 \
 -- the registry surface the completer needs (kept structural so tests can pass a\
@@ -1399,7 +1438,8 @@ function Completer.complete(registry: RegistryLike, input: string): { Completion
 			table.insert(out, {\
 				text = match.value,\
 				kind = \"command\",\
-				detail = command and command.description or \"\",\
+				detail = if command then Command.signature(command) else \"\",\
+				description = command and command.description or \"\",\
 				replaceStart = replaceStart,\
 				replaceEnd = replaceEnd,\
 			})\
@@ -1410,11 +1450,13 @@ function Completer.complete(registry: RegistryLike, input: string): { Completion
 		if command then\
 			local arg = command.args[position - 1]\
 			if arg then\
+				local detail = if arg.description ~= \"\" then arg.description else `{arg.name}: {arg.typeExpr}`\
 				for _, suggestion in arg.type.autocomplete(currentWord) do\
 					table.insert(out, {\
 						text = suggestion,\
 						kind = \"argument\",\
-						detail = `{arg.name}: {arg.typeExpr}`,\
+						detail = detail,\
+						description = arg.description or \"\",\
 						replaceStart = replaceStart,\
 						replaceEnd = replaceEnd,\
 					})\
@@ -1424,6 +1466,28 @@ function Completer.complete(registry: RegistryLike, input: string): { Completion
 	end\
 \
 	return out\
+end\
+\
+--- Signature intellisense for `input`: the resolved command, its usage, and\
+--- which argument the cursor is on (0 while still typing the name). Returns nil\
+--- when the first word isn't a known command.\
+function Completer.hint(registry: RegistryLike, input: string): Hint?\
+	local words, endsWithSpace = splitWords(input)\
+	if #words == 0 then\
+		return nil\
+	end\
+	local command = registry:resolve(words[1])\
+	if not command then\
+		return nil\
+	end\
+	local activeIndex = if endsWithSpace then #words else #words - 1 -- 0 = on the name\
+	return {\
+		name = command.name,\
+		signature = Command.signature(command),\
+		description = command.description,\
+		args = command.args,\
+		activeIndex = activeIndex,\
+	}\
 end\
 \
 --- The ghost-text completion of `input`: the remaining characters of the single\
@@ -2023,10 +2087,35 @@ local function unknownType(name: string): Type\
 	}\
 end\
 \
+-- a literal string value: `name: gruvbox | tokyonight` is a union of these, i.e.\
+-- an enum of allowed words that also autocompletes itself\
+local function literalType(value: string): Type\
+	return {\
+		name = value,\
+		transform = function(raw)\
+			if raw == value then\
+				return value\
+			end\
+			return nil, `expected '{value}'`\
+		end,\
+		validate = function(v)\
+			return v == value, if v == value then nil else `expected '{value}'`\
+		end,\
+		autocomplete = function(prefix)\
+			if string.sub(value, 1, #prefix) == prefix then\
+				return { value }\
+			end\
+			return {}\
+		end,\
+	}\
+end\
+\
 local function compileName(node: any): Type\
 	local def = registry[node.name]\
 	if not def then\
-		return unknownType(node.name)\
+		-- an unregistered name is a literal value, so `gruvbox | tokyonight` and\
+		-- `red | green | blue` work as enums with no type registration\
+		return literalType(node.name)\
 	end\
 	return {\
 		name = def.name,\
