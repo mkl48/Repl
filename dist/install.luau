@@ -1992,7 +1992,8 @@ return History\
 --- @section Server\
 --- @client\
 \
-local Substance = require(script.Parent.Parent.Parent._Packages.Substance)\
+-- Network is _Main/Network/init, so root is two parents up (Network → _Main → Repl)\
+local Substance = require(script.Parent.Parent._Packages.Substance)\
 \
 local Network = {}\
 \
