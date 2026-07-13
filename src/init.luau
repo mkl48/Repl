@@ -30,6 +30,9 @@ local Repl = {}
 Repl.Shell = require(script._Utility.Shell)
 Repl.Types = require(script._Main.Types)
 Repl.Theme = require(script._Utility.Theme)
+
+-- register the built-in Roblox arg types (Player, Players, Team) with autofill
+require(script._Main.Types.Roblox).register(Repl.Types)
 Repl.Result = Patterns.Result
 Repl.Option = Patterns.Option
 
