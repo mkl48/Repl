@@ -23,4 +23,7 @@ local Patterns = require(script._Patterns)
 Repl.Result = Patterns.Result
 Repl.Option = Patterns.Option
 
+-- The semantic theme (Repl.Theme:Set("tokyonight") recolors the whole surface).
+Repl.Theme = require(script._Utility.Theme)
+
 return Repl

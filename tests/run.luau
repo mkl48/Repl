@@ -16,6 +16,7 @@ local specs = {
 	{ name = "Fuzzy", spec = require("./fuzzy.spec") },
 	{ name = "Output", spec = require("./output.spec") },
 	{ name = "Context", spec = require("./context.spec") },
+	{ name = "Theme", spec = require("./theme.spec") },
 }
 
 local t = Harness.new()
