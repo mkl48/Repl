@@ -102,6 +102,13 @@ function Repl:RegisterHook(phase: string, fn: (...any) -> ())
 	return Repl.Registry:RegisterHook(phase, fn)
 end
 
+--- Registers the built-in commands (help, theme, clear, kick, announce, ping, …),
+--- skipping any name your game already registered. Called automatically by
+--- `Start`; call it yourself on the server.
+function Repl:InstallBuiltins()
+	require(script._Commands).install(Repl)
+end
+
 --- Runs a line programmatically (same path the bar submits through).
 function Repl:Execute(line: string, exec: any?)
 	return dispatcher:run(line, exec or { realm = if RunService:IsServer() then "server" else "client" })
@@ -128,6 +135,9 @@ function Repl:Start(config: any?)
 		return Repl
 	end
 	config = config or {}
+	if config.Builtins ~= false then
+		Repl:InstallBuiltins()
+	end
 	local t = config.Terminal or {}
 	local function pick(a, b)
 		if a ~= nil then

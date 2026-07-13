@@ -2,56 +2,22 @@
 -- Repl bar demo. Drop this in as a LocalScript (e.g. StarterPlayerScripts) with
 -- the Repl package at ReplicatedStorage.Repl, then press ` (backquote) in-game.
 --
--- This is all the setup it takes now: theme, register a few commands, Start.
+-- The built-ins (help, theme, themes, clear, ping) install automatically on Start.
+-- See server.server.luau for roles + server commands (kick, announce, give).
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Repl = require(ReplicatedStorage:WaitForChild("Repl"))
 
 Repl.Theme:Set("tokyonight")
 
+-- one of your own client commands
 Repl:RegisterCommand({
 	Name = "hello",
+	Realm = "Client",
 	Description = "Greet someone.",
-	Args = { "who: String? = world" },
+	Args = { "who: String? = world # who to greet" },
 	Run = function(ctx, who)
 		return ctx:ok(`hello, {who}!`)
-	end,
-})
-
-Repl:RegisterCommand({
-	Name = "theme",
-	Aliases = { "colorscheme" },
-	Description = "Switch the colorscheme.",
-	Args = { "name: String" },
-	Run = function(ctx, name)
-		if not Repl.Theme.has(name) then
-			return ctx:err(`no theme '{name}' (have: {table.concat(Repl.Theme.list(), ", ")})`)
-		end
-		Repl.Theme:Set(name)
-		return ctx:ok(`theme → {name}`)
-	end,
-})
-
-Repl:RegisterCommand({
-	Name = "add",
-	Description = "Add two numbers (try: add 2 3).",
-	Args = { "a: Number", "b: Number" },
-	Run = function(ctx, a, b)
-		return ctx:ok(`{a} + {b} = {a + b}`)
-	end,
-})
-
-Repl:RegisterCommand({
-	Name = "commands",
-	Aliases = { "help" },
-	Description = "List commands.",
-	Run = function(ctx)
-		local rows = { { "command", "description" } }
-		for _, command in Repl.Registry:all() do
-			table.insert(rows, { command.name, command.description })
-		end
-		ctx:table(rows)
-		return ctx:ok()
 	end,
 })
 
@@ -60,14 +26,17 @@ Repl.FocusChanged:Connect(function(isFocused)
 	print(`[game] terminal focused: {isFocused} — disable your own binds here`)
 end)
 
--- full panel at the bottom by default. Everything's customizable:
 Repl:Start()
+-- everything is customizable:
 -- Repl:Start({
 --     Terminal = {
 --         Compact = true,             -- single Cmdr-like bar
 --         Align = "Center",           -- "Top" | "Bottom" | "Center"
+--         Square = false,             -- no rounded corners
+--         Scale = 1,                  -- UIScale over the whole terminal
+--         Transparency = 0.1,         -- command-line background
+--         Directory = "MyGame",       -- prompt root -> "MyGame/kr3ative/repl >"
 --         Intellisense = true,        -- the live signature hint
---         CursorStyle = "block",      -- "block" | "line" | "underline"
 --         Width = 720,
 --     },
 -- })
